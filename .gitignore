@@ -1,0 +1,29 @@
+.vendor/
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+test-output/
+
+# Local tooling and editor settings
+.agents/
+.codex/
+.vscode/
+.idea/
+
+# Environment variables and private keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

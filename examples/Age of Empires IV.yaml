@@ -1,0 +1,57 @@
+description: Example Age of Empires IV slot for Archipelago 0.6.7+
+name: Player
+game: Age of Empires IV
+
+Age of Empires IV:
+  progression_balancing: 50
+  accessibility: items
+  goal: total_wins
+  total_win_goal: 20
+  wins_per_goal_civilization: 3
+  # Used as the complete unlock pool only when goal is civilization_wins.
+  goal_civilizations:
+    - english
+  target_rank: gold_1
+  # Used for total_wins, solo_rank, and team_rank; ignored by civilization_wins.
+  civilization_pool:
+    - abbasid_dynasty
+    - ayyubids
+    - byzantines
+    - chinese
+    - delhi_sultanate
+    - english
+    - french
+    - golden_horde
+    - house_of_lancaster
+    - holy_roman_empire
+    - japanese
+    - jeanne_darc
+    - jin_dynasty
+    - knights_templar
+    - macedonian_dynasty
+    - malians
+    - mongols
+    - order_of_the_dragon
+    - ottomans
+    - rus
+    - sengoku_daimyo
+    - tughlaq_dynasty
+    - zhu_xis_legacy
+  starting_civilization: random
+  # Total starting unlocks. Additional starts are selected from the same active
+  # goal_civilizations or civilization_pool list as starting_civilization.
+  starting_civs: 1
+  eligible_match_modes:
+    - rm_solo
+    - rm_team
+    - qm_1v1
+    - qm_2v2
+    - qm_3v3
+    - qm_4v4
+  # These three check options are ignored by civilization_wins, which creates
+  # numbered checks 1 through wins_per_goal_civilization for each goal civ.
+  civ_sanity: true
+  win_check_interval: 1
+  win_check_count: 25
+  include_custom_games: false
+  death_link: false

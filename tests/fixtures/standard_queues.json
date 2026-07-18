@@ -1,0 +1,12 @@
+{
+  "profile_id": 1001,
+  "games": [
+    {"game_id": 1, "started_at": "2026-01-01T00:01:00Z", "updated_at": "2026-01-01T00:11:00Z", "duration": 600, "leaderboard": "rm_solo", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english", "civilization_randomized": false}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "french"}}]]},
+    {"game_id": 2, "started_at": "2026-01-01T01:01:00Z", "updated_at": "2026-01-01T01:21:00Z", "duration": 1200, "leaderboard": "rm_team", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english"}}, {"player": {"profile_id": 1002, "result": "win", "civilization": "french"}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "mongols"}}, {"player": {"profile_id": 2002, "result": "loss", "civilization": "rus"}}]]},
+    {"game_id": 3, "started_at": "2026-01-01T02:01:00Z", "updated_at": "2026-01-01T02:11:00Z", "duration": 600, "leaderboard": "qm_1v1", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english", "civilization_randomized": true}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "chinese"}}]]},
+    {"game_id": 4, "started_at": "2026-01-01T03:01:00Z", "updated_at": "2026-01-01T03:11:00Z", "duration": 600, "leaderboard": "qm_2v2", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english"}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "japanese"}}]]},
+    {"game_id": 5, "started_at": "2026-01-01T04:01:00Z", "updated_at": "2026-01-01T04:11:00Z", "duration": 600, "leaderboard": "qm_3v3", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english"}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "malians"}}]]},
+    {"game_id": 6, "started_at": "2026-01-01T05:01:00Z", "updated_at": "2026-01-01T05:11:00Z", "duration": 600, "leaderboard": "qm_4v4", "ongoing": false, "teams": [[{"player": {"profile_id": 1001, "result": "win", "civilization": "english"}}], [{"player": {"profile_id": 2001, "result": "loss", "civilization": "ottomans"}}]]}
+  ]
+}
+
