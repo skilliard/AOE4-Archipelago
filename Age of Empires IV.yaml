@@ -1,0 +1,256 @@
+﻿# Q. What is this file?
+# A. This file contains options which allow you to configure your multiworld experience while allowing
+#    others to play how they want as well.
+#
+# Q. How do I use it?
+# A. The options in this file are weighted. This means the higher number you assign to a value, the
+#    more chances you have for that option to be chosen. For example, an option like this:
+#
+#    map_shuffle:
+#      on: 5
+#      off: 15
+#
+#    Means you have 5 chances for map shuffle to occur, and 15 chances for map shuffle to be turned
+#    off.
+#
+# Q. I've never seen a file like this before. What characters am I allowed to use?
+# A. This is a .yaml file. You are allowed to use most characters.
+#    To test if your yaml is valid or not, you can use this website:
+#        http://www.yamllint.com/
+#    You can also verify that your Archipelago options are valid at this site:
+#        https://archipelago.gg/check
+
+# Your name in-game, limited to 16 characters.
+#     {player} will be replaced with the player's slot number.
+#     {PLAYER} will be replaced with the player's slot number, if that slot number is greater than 1.
+#     {number} will be replaced with the counter value of the name.
+#     {NUMBER} will be replaced with the counter value of the name, if the counter value is greater than 1.
+name: Player{number}
+
+# Used to describe your yaml. Useful if you have multiple files.
+description: Default Age of Empires IV Template
+
+game: Age of Empires IV
+requires:
+  version: 0.6.7 # Version of Archipelago required for this yaml to work as expected.
+  game:
+    Age of Empires IV: 0.4.0 # Version of the world required for this yaml to work as expected.
+
+Age of Empires IV:
+  ################
+  # Game Options #
+  ################
+  progression_balancing:
+    # A system that can move progression earlier, to try and prevent the player from getting stuck and bored early.
+    # 
+    # A lower setting means more getting stuck. A higher setting means less getting stuck.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 99
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-0-99: 0 # random value between 0 and 99
+    disabled: 0 # equivalent to 0
+    normal: 50 # equivalent to 50
+    extreme: 0 # equivalent to 99
+
+  accessibility:
+    # Set rules for reachability of your items/locations.
+    # 
+    # **Full:** ensure everything can be reached and acquired.
+    # 
+    # **Minimal:** ensure what is needed to reach your goal can be acquired.
+    full: 50
+    minimal: 0
+
+  ########
+  # Goal #
+  ########
+  goal:
+    # The achievement that completes the slot.
+    total_wins: 50
+    solo_rank: 0
+    team_rank: 0
+    civilization_wins: 0
+
+  total_win_goal:
+    # Number of credited victories required for the total-wins goal.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 500
+    20: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-500: 0 # random value between 1 and 500
+
+  wins_per_goal_civilization:
+    # Victories required with every selected goal civilization.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 50
+    3: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-50: 0 # random value between 1 and 50
+
+  goal_civilizations:
+    # Civilizations unlocked and required when the goal is civilization wins. Civilization pool is then ignored.
+    ['english']
+
+  target_rank:
+    # Rank which must be observed for the selected ranked goal. Rank completion is permanent.
+    bronze_1: 0
+    bronze_2: 0
+    bronze_3: 0
+    silver_1: 0
+    silver_2: 0
+    silver_3: 0
+    gold_1: 50
+    gold_2: 0
+    gold_3: 0
+    platinum_1: 0
+    platinum_2: 0
+    platinum_3: 0
+    diamond_1: 0
+    diamond_2: 0
+    diamond_3: 0
+    conqueror_1: 0
+    conqueror_2: 0
+    conqueror_3: 0
+
+  #################
+  # Civilizations #
+  #################
+  civilization_pool:
+    # Civilizations unlocked for total-wins and rank goals. Ignored by the civilization-wins goal.
+    ['chinese', 'french', 'byzantines', 'sengoku_daimyo', 'ayyubids', 'english', 'zhu_xis_legacy', 'delhi_sultanate', 'jeanne_darc', 'holy_roman_empire', 'knights_templar', 'order_of_the_dragon', 'jin_dynasty', 'rus', 'mongols', 'house_of_lancaster', 'malians', 'abbasid_dynasty', 'tughlaq_dynasty', 'macedonian_dynasty', 'ottomans', 'japanese', 'golden_horde']
+
+  starting_civilization:
+    # A guaranteed starting unlock. Random uses the active goal-dependent civilization pool.
+    abbasid_dynasty: 0
+    ayyubids: 0
+    byzantines: 0
+    chinese: 0
+    delhi_sultanate: 0
+    english: 0
+    french: 0
+    golden_horde: 0
+    house_of_lancaster: 0
+    holy_roman_empire: 0
+    japanese: 0
+    jeanne_darc: 0
+    jin_dynasty: 0
+    knights_templar: 0
+    macedonian_dynasty: 0
+    malians: 0
+    mongols: 0
+    order_of_the_dragon: 0
+    ottomans: 0
+    rus: 0
+    sengoku_daimyo: 0
+    tughlaq_dynasty: 0
+    zhu_xis_legacy: 0
+    random: 50
+
+  starting_civs:
+    # Number of civilizations to start unlocked from the active goal-dependent pool.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 23
+    1: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-23: 0 # random value between 1 and 23
+
+  civ_sanity:
+    # Add a first-win check per pool civilization for total-win/rank goals. Civilization-win goals ignore this.
+    'false': 0
+    'true': 50
+
+  ##################
+  # Match Tracking #
+  ##################
+  eligible_match_modes:
+    # Standard queues which can produce wins, losses, checks, and DeathLinks.
+    ['qm_1v1', 'rm_solo', 'rm_team', 'qm_4v4', 'qm_2v2', 'qm_3v3']
+
+  win_check_interval:
+    # Credited victories between total-win checks. Civilization-win goals use numbered per-civ checks instead.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 50
+    1: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-50: 0 # random value between 1 and 50
+
+  win_check_count:
+    # Number of total-win milestone checks. Ignored by civilization-win goals.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 1
+    # Maximum value is 100
+    25: 50
+    random: 0
+    random-low: 0 # random value weighted towards lower values
+    random-high: 0 # random value weighted towards higher values
+    random-range-1-100: 0 # random value between 1 and 100
+
+  include_custom_games:
+    # Count completed custom games when the client has a session-only AOE4World API key.
+    'false': 50
+    'true': 0
+
+  death_link:
+    # Send a DeathLink on eligible losses and suppress one eligible match after a received DeathLink.
+    'false': 50
+    'true': 0
+
+  ###########################
+  # Item & Location Options #
+  ###########################
+  local_items:
+    # Forces these items to be in their native world.
+    []
+
+  non_local_items:
+    # Forces these items to be outside their native world.
+    []
+
+  start_inventory:
+    # Start with the specified amount of these items. Example: "Bomb: 1"
+    {}
+
+  start_hints:
+    # Start with these item's locations prefilled into the ``!hint`` command.
+    []
+
+  start_location_hints:
+    # Start with these locations and their item prefilled into the ``!hint`` command.
+    []
+
+  exclude_locations:
+    # Prevent these locations from having an important item.
+    []
+
+  priority_locations:
+    # Prevent these locations from having an unimportant item.
+    []
+
+  item_links:
+    # Share part of your item pool with other players.
+    []
+
+  plando_items:
+    # Generic items plando.
+    []
