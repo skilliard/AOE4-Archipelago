@@ -29,6 +29,11 @@ The client also includes a live **Tracker** tab showing available civilizations,
 
 # FAQ:
 
+# I won, why didn't my checks show up?
+
+1. Make sure you remembered to enter your player ID and click set tracking.
+2. It usually takes ~2 minutes for checks to show up as the client polls the API every 60 seconds and the API can take time to update with game results.
+
 # What if I bound the wrong account by mistake?
 
 You can change the profile you are tracking and it will fix future checks, but you cannot unsend already sent checks.
