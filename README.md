@@ -1,13 +1,43 @@
-# Age of Empires IV Archipelago
+# Overview
 
-Custom Archipelago 0.6.7 world and launcher-integrated desktop client for Age of Empires IV. Match completion is tracked through AOE4World; the game itself is never modified.
+This implementation of Archipelago for Age of Empires IV works by using the AOE4world API. It does not mod the game client in any way. Your civilization unlocks are spread out in other games in the Archipelago, and you send locations by winning games or winning as specific civs.
 
-The desktop client requires an AOE4World profile ID. Its session-only API key is optional for public games and enables private/custom-game visibility when configured by the slot.
+# Easy Setup:
 
-An accidentally bound profile can be corrected from the AOE4 client tab through the standard Archipelago DataStorage protocol; no upstream client or server fork is required.
+1. Download and double click the .APWorld.
+2. Open options creator in the Archipelago client to create a YAML
+3. When game is generated, open the Age of Empires IV client in your archipelago launcher, then enter your AOE4world ID, then click "start tracking.
+(visit aoe4world.com, look up your username, then take the numbers in the URL. For example for Skilliard(https://aoe4world.com/players/3454795), the player ID is 3454795.
 
-The client also includes a live **Tracker** tab showing available civilizations, unlocked civilizations that still need required wins, earned/attainable total and per-civilization progress, and locked civilizations. Civilization flags are packaged from AOE4World Explorer for offline display.
+# Options:
+Goals:
+1. Civilization wins: Win X amount of times as all available civs.
+2. Total wins: Win X amount of games
+3. Rank: Reach a specific rank(Not yet tested)
+
+Other options:
+
+Civsanity: send one or more location checks for winning as each civ
 
 Civilization selection is goal-dependent. A `civilization_wins` seed uses `goal_civilizations` as its complete unlock pool and creates one numbered check for every required win with every selected civilization. Total-win and rank seeds use `civilization_pool` instead and retain configurable global-win and civilization-sanity checks. The first civilization item, such as **Progressive English Civilization**, unlocks that civilization and its initial win band; later copies raise that cap while earned wins continue accumulating for retroactive credit. `starting_civs` selects up to five deterministic random starts, while a non-empty `starting_civilizations` list supplies the exact starting set.
 
-See [the setup guide](aoe4/docs/setup_en.md) for installation and play instructions. Source builds use Python 3.11–3.13. Build the distributable and an upstream-generated YAML template with `powershell -ExecutionPolicy Bypass -File scripts/build_apworld.ps1`. On a fresh development machine, add `-InstallDependencies`. Run the automated suite with `powershell -ExecutionPolicy Bypass -File scripts/test.ps1`.
+# Note: If civsanity is disabled, you will need to have at least as many win checks as civilizations in your civ pool for the game to generate.
+
+# Tracker
+
+The client also includes a live **Tracker** tab showing available civilizations, unlocked civilizations that still need required wins, earned/attainable total and per-civilization progress, and locked civilizations. Civilization flags are packaged from AOE4World Explorer for offline display.
+
+# FAQ:
+
+# I won, why didn't my checks show up?
+
+1. Make sure you remembered to enter your player ID and click set tracking.
+2. It usually takes ~2 minutes for checks to show up as the client polls the API every 60 seconds and the API can take time to update with game results.
+
+# What if I bound the wrong account by mistake?
+
+You can change the profile you are tracking and it will fix future checks, but you cannot unsend already sent checks.
+
+
+
+
