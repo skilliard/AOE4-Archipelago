@@ -57,6 +57,24 @@ def test_tracker_handles_slots_without_civilization_specific_requirements():
     assert all(entry.requirement_complete for entry in entries)
 
 
+def test_tracker_exposes_earned_and_attainable_civilization_wins():
+    entries = build_civilization_tracker_entries(
+        slot_data(
+            wins_per_goal_civilization=6,
+            civilization_win_cap_stages=[2, 3, 4, 5, 6],
+        ),
+        {"english"},
+        {"english": 6},
+        {"english": 2},
+    )
+    english = next(entry for entry in entries if entry.civilization == "english")
+    assert english.credited_wins == 6
+    assert english.attainable_wins == 2
+    assert english.wins_remaining == 0
+    assert english.cap_blocked
+    assert not english.requirement_complete
+
+
 def test_every_pinned_civilization_has_a_packaged_png_flag():
     assert set(CIVILIZATION_FLAG_FILES) == set(CIVILIZATIONS)
     asset_root = resources.files("aoe4.client").joinpath("assets", "civilization_flags")

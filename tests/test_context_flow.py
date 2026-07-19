@@ -16,8 +16,12 @@ from aoe4.client.context import (
 )
 from aoe4.client.launch import parse_launch_args
 from aoe4.client.state import state_key
-from aoe4.client.tracker import TrackerState
-from aoe4.constants import civilization_unlock_name, civilization_win_location_name
+from aoe4.client.tracker import MatchTracker, TrackerConfig, TrackerState
+from aoe4.constants import (
+    PROGRESSIVE_TOTAL_WIN_CAP,
+    civilization_unlock_name,
+    civilization_win_location_name,
+)
 from aoe4.items import ITEM_NAME_TO_ID
 from aoe4.locations import LOCATION_NAME_TO_ID
 
@@ -99,6 +103,7 @@ class FakeAPI:
         self.last = {"game_id": None, "updated_at": None, "ongoing": False}
         self.last_calls = []
         self.since_calls = []
+        self.game_calls = []
 
     async def profile(self, profile_id):
         return {
@@ -118,6 +123,62 @@ class FakeAPI:
         assert since >= self.baseline
         self.since_calls.append(since)
         return list(self.games)
+
+    async def game(self, _profile_id, game_id):
+        self.game_calls.append(game_id)
+        return next(game for game in self.games if game["game_id"] == game_id)
+
+
+@pytest.mark.asyncio
+async def test_unknown_result_is_repolled_until_the_same_game_resolves(tmp_path, monkeypatch):
+    baseline = time.time() - 300
+    fake_api = FakeAPI(baseline)
+    install_test_datapackage(monkeypatch)
+    monkeypatch.setattr(context_module.Utils, "user_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(context_module, "AOE4WorldClient", lambda _key=None: fake_api)
+
+    ctx = AgeOfEmpiresIVContext(initial_profile_id=123)
+    ctx.team, ctx.slot, ctx.seed_name = 0, 1, "Delayed Result Seed"
+    ctx.slot_data = slot_data(death_link=False)
+    ctx._api = fake_api
+    ctx._cap_inventory_dirty = False
+
+    async def check_locations(locations):
+        return set(locations)
+
+    ctx.check_locations = check_locations
+    ctx.send_msgs = lambda messages: _record_messages([], messages)
+
+    async def set_default(key, default):
+        return 123 if "profile" in key else baseline
+
+    ctx._set_default = set_default
+    await ctx._initialize_tracking((ctx._connected_nonce, ctx._credentials_nonce))
+
+    delayed = make_game(243_446_997, "unknown", "english", baseline + 30)
+    fake_api.games = [delayed]
+    # Deliberately keep this signature unchanged when the result resolves.
+    fake_api.last = {"game_id": 243_446_997, "updated_at": baseline + 50, "ongoing": False}
+
+    await ctx._poll()
+    await ctx._poll()
+    assert len(fake_api.since_calls) == 1
+    assert fake_api.game_calls == [243_446_997]
+    assert ctx.tracker.state.total_wins == 0
+    assert ctx.tracker.state.pending_games == {"243446997": baseline + 30}
+
+    fake_api.games = [make_game(243_446_997, "win", "english", baseline + 30)]
+    await ctx._poll()
+    assert len(fake_api.since_calls) == 1
+    assert fake_api.game_calls == [243_446_997, 243_446_997]
+    assert ctx.tracker.state.total_wins == 1
+    assert ctx.tracker.state.pending_games == {}
+    assert ctx.tracker.state.last_game_summary == "Win as English in rm_solo"
+
+    await ctx._poll()
+    assert len(fake_api.since_calls) == 1
+    assert fake_api.game_calls == [243_446_997, 243_446_997]
+    await ctx.shutdown()
 
 
 @pytest.mark.asyncio
@@ -305,6 +366,74 @@ async def test_civilization_win_checks_map_to_nested_slot_location_ids(tmp_path,
     assert len(ctx._configured_location_ids()) == 15
     assert ctx._location_ids(names) == ctx._configured_location_ids()
     await ctx.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_received_progressive_item_backfills_without_an_api_fetch(tmp_path, monkeypatch):
+    install_test_datapackage(monkeypatch)
+    monkeypatch.setattr(context_module.Utils, "user_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    ctx = AgeOfEmpiresIVContext(initial_profile_id=123)
+    ctx.slot_data = slot_data(death_link=False)
+    ctx.slot_data.update(
+        {
+            "total_win_goal": 20,
+            "civ_sanity": False,
+            "win_thresholds": list(range(1, 21)),
+            "win_location_ids": {
+                str(value): 7_412_000 + value for value in range(1, 21)
+            },
+            "total_win_cap_stages": [4, 8, 12, 16, 20],
+            "civilization_win_cap_stages": [],
+            "progressive_total_win_cap_item_id": ITEM_NAME_TO_ID[
+                PROGRESSIVE_TOTAL_WIN_CAP
+            ],
+            "progressive_civilization_win_cap_item_ids": {},
+        }
+    )
+    config = TrackerConfig.from_slot_data(123, 1_000.0, ctx.slot_data)
+    ctx.tracker = MatchTracker(config, TrackerState(total_wins=20))
+    sent_checks = []
+    sent_messages = []
+
+    async def check_locations(locations):
+        sent_checks.extend(sorted(locations))
+        return set(locations)
+
+    ctx.check_locations = check_locations
+    ctx.send_msgs = lambda messages: _record_messages(sent_messages, messages)
+    await ctx._reconcile_cap_inventory()
+    assert sent_checks == [7_412_001, 7_412_002, 7_412_003, 7_412_004]
+    assert ctx.total_win_tracker_progress() == (20, 4, 20)
+
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[PROGRESSIVE_TOTAL_WIN_CAP])
+    )
+    ctx.on_package("ReceivedItems", {"index": 0, "items": []})
+    assert ctx._cap_inventory_dirty
+    await ctx._reconcile_cap_inventory()
+    assert sent_checks[-4:] == [7_412_005, 7_412_006, 7_412_007, 7_412_008]
+    assert ctx.total_win_tracker_progress() == (20, 8, 20)
+    assert not ctx._cap_inventory_dirty
+
+    ctx.missing_locations = {7_412_001}
+    await ctx._reconcile_cap_inventory()
+    assert sent_checks[-1] == 7_412_001
+    ctx.missing_locations.clear()
+
+    ctx.items_received.extend(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[PROGRESSIVE_TOTAL_WIN_CAP])
+        for _ in range(3)
+    )
+    ctx.on_package("ReceivedItems", {"index": 1, "items": []})
+    await ctx._reconcile_cap_inventory()
+    assert sent_checks[-12:] == list(range(7_412_009, 7_412_021))
+    assert any(message.get("status") == 30 for message in sent_messages)
+    assert ctx.tracker.state.goal_sent
+    await ctx.shutdown()
+
+
+async def _record_messages(target, messages):
+    target.extend(messages)
 
 
 @pytest.mark.asyncio

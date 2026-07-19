@@ -11,15 +11,17 @@ The desktop client's **Tracker** tab uses AOE4World Explorer civilization flags 
 ## Checks
 
 - For a **civilization-wins goal**, every civilization in `goal_civilizations` receives numbered checks from win 1 through `wins_per_goal_civilization`. Three civilizations at five wins each therefore produce exactly 15 checks. Civilization sanity and global win milestones are ignored for this goal.
-- For a **total-win or rank goal**, **Civilization Victory** checks are awarded on the first credited win with each civilization in `civilization_pool` when civilization sanity is enabled.
-- For a **total-win or rank goal**, **Win Matches** checks are awarded at every configured interval. Backfilled games may cross and send multiple milestones at once.
+- For a **total-win or rank goal**, civilization sanity creates `civ_sanity_win_count` checks with each civilization in `civilization_pool`. A count of 1 retains the **Civilization Victory** check name; larger counts use numbered civilization wins.
+- For a **total-win or rank goal**, **Win Matches** checks are awarded at every configured interval. The final total-win cap covers the larger of the highest milestone and the total-wins goal target.
+
+Wins are always recorded even when they exceed the current cap. The first 20% band is attainable immediately. Each **Progressive Total Win Cap** or civilization-specific progressive cap unlocks the next band, using cumulative rounded-up 20% boundaries. Targets below five advance one win at a time. Receiving a cap immediately submits any already-earned checks it unlocks; total-win and civilization-win goals follow the same cap rule.
 
 ## Items
 
-The number configured by `starting_civs` begins unlocked (1 by default). `starting_civilization` selects one guaranteed member of that starting set. For a civilization-wins goal, all starting unlocks come from `goal_civilizations`; for total-win and rank goals, they come from `civilization_pool`. Every other civilization in that active pool appears once as a progression item. Remaining item slots contain **Strategic Insight**, a no-op filler item.
+The number configured by `starting_civs` begins unlocked (1 by default, maximum 5). `starting_civilization` selects one guaranteed member of that random starting set. Alternatively, a non-empty `starting_civilizations` list supplies the exact 1-5 starts and overrides both legacy selectors. For a civilization-wins goal, all starting unlocks come from `goal_civilizations`; for total-win and rank goals, they come from `civilization_pool`. Every other civilization in that active pool appears once as a progression item. Progressive win caps occupy additional progression slots, and remaining locations contain **Strategic Insight**, a no-op filler item.
 
 ## Goals
 
-The slot can require total credited wins, wins with every selected civilization, a ranked 1v1 rank, or a ranked teams rank. `goal_civilizations` is used only by the civilization-wins goal; `civilization_pool` is used by the other three goals. Rank completion is permanent once observed. DeathLink suppression affects win-derived progress but never rank progress.
+The slot can require total credited wins, wins with every selected civilization, a ranked 1v1 rank, or a ranked teams rank. `goal_civilizations` is used only by the civilization-wins goal; `civilization_pool` is used by the other three goals. Total-win and civilization-win goals cannot complete until the cap covering their target is attainable. Rank completion is permanent once observed and is never gated by win caps. DeathLink suppression affects win-derived progress but never rank progress.
 
 When enabled in the YAML, completed custom games follow the same unlocked-civilization, win, check, goal, and DeathLink rules as standard queues.

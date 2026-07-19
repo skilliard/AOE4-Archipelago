@@ -55,6 +55,9 @@ class TrackerConfig:
     win_thresholds: tuple[int, ...]
     death_link: bool
     numbered_civilization_win_checks: bool = False
+    civ_sanity_win_count: int = 1
+    total_win_cap_stages: tuple[int, ...] = ()
+    civilization_win_cap_stages: tuple[int, ...] = ()
 
     @classmethod
     def from_slot_data(
@@ -82,12 +85,19 @@ class TrackerConfig:
             numbered_civilization_win_checks=bool(
                 slot_data.get("civilization_win_location_ids")
             ),
+            civ_sanity_win_count=int(slot_data.get("civ_sanity_win_count", 1)),
+            total_win_cap_stages=tuple(
+                int(value) for value in slot_data.get("total_win_cap_stages", ())
+            ),
+            civilization_win_cap_stages=tuple(
+                int(value) for value in slot_data.get("civilization_win_cap_stages", ())
+            ),
         )
 
 
 @dataclass
 class TrackerState:
-    schema_version: int = 2
+    schema_version: int = 3
     total_wins: int = 0
     civilization_wins: dict[str, int] = field(default_factory=dict)
     seen_game_ids: list[int] = field(default_factory=list)
@@ -98,6 +108,7 @@ class TrackerState:
     last_game_id: int | None = None
     last_api_game_signature: str | None = None
     last_game_summary: str = "No eligible match observed"
+    pending_games: dict[str, float] = field(default_factory=dict)
     solo_rank: str | None = None
     team_rank: str | None = None
     rank_goal_reached: bool = False
@@ -120,7 +131,30 @@ class TrackerState:
             # Version 0.1 always required a key, so its sole cursor is also the
             # correct starting point for credentialed history.
             values["credentialed_cursor_started_at"] = data.get("cursor_started_at")
-        values["schema_version"] = 2
+        if schema_version < 3:
+            # Version 0.2 incorrectly made an unresolved result permanent. The
+            # most recent affected game can be recovered from its saved summary.
+            summary = str(data.get("last_game_summary") or "")
+            game_id = data.get("last_game_id")
+            cursor = data.get("cursor_started_at")
+            if summary.startswith("Unknown as ") and game_id is not None:
+                values["seen_game_ids"] = [
+                    seen_id
+                    for seen_id in data.get("seen_game_ids", ())
+                    if str(seen_id) != str(game_id)
+                ]
+                if cursor is not None:
+                    values["pending_games"] = {str(int(game_id)): float(cursor)}
+                values["last_game_summary"] = summary.replace(
+                    "Unknown as ", "Awaiting result as ", 1
+                )
+                values["last_api_game_signature"] = None
+        pending_games = values.get("pending_games", {})
+        values["pending_games"] = {
+            str(int(game_id)): float(started_at)
+            for game_id, started_at in pending_games.items()
+        }
+        values["schema_version"] = 3
         return cls(**values)
 
 
@@ -144,6 +178,7 @@ class TrackingOutcome:
     processed_game_ids: list[int] = field(default_factory=list)
     suppressed_game_ids: list[int] = field(default_factory=list)
     ignored_locked_wins: list[int] = field(default_factory=list)
+    pending_game_ids: list[int] = field(default_factory=list)
 
     def merge(self, other: "TrackingOutcome") -> None:
         self.new_checks.extend(other.new_checks)
@@ -152,6 +187,7 @@ class TrackingOutcome:
         self.processed_game_ids.extend(other.processed_game_ids)
         self.suppressed_game_ids.extend(other.suppressed_game_ids)
         self.ignored_locked_wins.extend(other.ignored_locked_wins)
+        self.pending_game_ids.extend(other.pending_game_ids)
 
 
 def _iter_players(game: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
@@ -200,7 +236,7 @@ def parse_match(game: Mapping[str, Any], profile_id: int) -> ParsedMatch | None:
         game_id=game_id,
         mode="custom" if is_custom else leaderboard or kind,
         is_custom=is_custom,
-        result=str(player.get("result") or "unknown").lower(),
+        result=str(player.get("result") or "unknown").strip().lower(),
         civilization=normalize_civilization(player.get("civilization")),
         completed_at=completed_at,
         started_at=started_at or completed_at,
@@ -229,6 +265,39 @@ class MatchTracker:
         self._seen = set(self.state.seen_game_ids)
         self._checks = set(self.state.completed_checks)
         self._sent_deaths = set(self.state.sent_death_game_ids)
+        self._total_win_cap_items = 0
+        self._civilization_win_cap_items: dict[str, int] = {}
+
+    def update_cap_inventory(
+        self,
+        total_win_cap_items: int,
+        civilization_win_cap_items: Mapping[str, int],
+    ) -> TrackingOutcome:
+        """Apply received progressive items and backfill newly attainable progress."""
+        self._total_win_cap_items = max(
+            self._total_win_cap_items,
+            self._clamp_cap_items(total_win_cap_items, self.config.total_win_cap_stages),
+        )
+        for civilization, count in civilization_win_cap_items.items():
+            self._civilization_win_cap_items[civilization] = max(
+                self._civilization_win_cap_items.get(civilization, 0),
+                self._clamp_cap_items(count, self.config.civilization_win_cap_stages),
+            )
+        outcome = TrackingOutcome()
+        self._reconcile_checks(outcome)
+        outcome.goal_reached = self.goal_reached()
+        return outcome
+
+    def current_total_win_cap(self) -> int | None:
+        return self._current_cap(
+            self.config.total_win_cap_stages, self._total_win_cap_items
+        )
+
+    def current_civilization_win_cap(self, civilization: str) -> int | None:
+        return self._current_cap(
+            self.config.civilization_win_cap_stages,
+            self._civilization_win_cap_items.get(civilization, 0),
+        )
 
     def receive_death_link(self, received_at: float) -> bool:
         self.expire_death_link(received_at)
@@ -282,7 +351,14 @@ class MatchTracker:
             if match.is_custom
             else match.mode in self.config.eligible_match_modes
         )
-        if not eligible_mode or match.result not in {"win", "loss"}:
+        if not eligible_mode:
+            self._remember_game(match)
+            return outcome
+        if match.result == "unknown":
+            self._defer_game(match)
+            outcome.pending_game_ids.append(match.game_id)
+            return outcome
+        if match.result not in {"win", "loss"}:
             self._remember_game(match)
             return outcome
 
@@ -327,10 +403,20 @@ class MatchTracker:
 
     def goal_reached(self) -> bool:
         if self.config.goal == "total_wins":
-            return self.state.total_wins >= self.config.total_win_goal
+            cap = self.current_total_win_cap()
+            return (
+                self.state.total_wins >= self.config.total_win_goal
+                and (cap is None or cap >= self.config.total_win_goal)
+            )
         if self.config.goal == "civilization_wins":
             return all(
-                self.state.civilization_wins.get(civilization, 0) >= self.config.wins_per_goal_civilization
+                self.state.civilization_wins.get(civilization, 0)
+                >= self.config.wins_per_goal_civilization
+                and (
+                    self.current_civilization_win_cap(civilization) is None
+                    or self.current_civilization_win_cap(civilization)
+                    >= self.config.wins_per_goal_civilization
+                )
                 for civilization in self.config.goal_civilizations
             )
         if self.config.goal in {"solo_rank", "team_rank"}:
@@ -338,34 +424,75 @@ class MatchTracker:
         return False
 
     def _credit_win(self, civilization: str, outcome: TrackingOutcome) -> None:
-        previous_wins = self.state.total_wins
         previous_civilization_wins = self.state.civilization_wins.get(civilization, 0)
         self.state.total_wins += 1
         self.state.civilization_wins[civilization] = previous_civilization_wins + 1
+        self._reconcile_checks(outcome, civilizations=(civilization,))
 
-        if (
+    def _reconcile_checks(
+        self,
+        outcome: TrackingOutcome,
+        civilizations: Iterable[str] | None = None,
+    ) -> None:
+        modern_civilization_goal = (
             self.config.goal == "civilization_wins"
             and self.config.numbered_civilization_win_checks
-        ):
-            if civilization in self.config.goal_civilizations:
-                current_civilization_wins = self.state.civilization_wins[civilization]
-                for win_number in range(
-                    previous_civilization_wins + 1,
-                    min(current_civilization_wins, self.config.wins_per_goal_civilization) + 1,
-                ):
+        )
+        if not modern_civilization_goal:
+            total_cap = self.current_total_win_cap()
+            attainable_total_wins = (
+                self.state.total_wins
+                if total_cap is None
+                else min(self.state.total_wins, total_cap)
+            )
+            for threshold in self.config.win_thresholds:
+                name = win_location_name(threshold)
+                if threshold <= attainable_total_wins and name not in self._checks:
+                    self._add_check(name, outcome)
+
+        if civilizations is None:
+            civilizations = (
+                civilization
+                for civilization in CIVILIZATIONS
+                if civilization in self.config.civilization_pool
+            )
+
+        if modern_civilization_goal:
+            target = self.config.wins_per_goal_civilization
+            eligible_civilizations = self.config.goal_civilizations
+        elif self.config.civ_sanity:
+            target = self.config.civ_sanity_win_count
+            eligible_civilizations = self.config.civilization_pool
+        else:
+            return
+
+        for civilization in civilizations:
+            if civilization not in eligible_civilizations:
+                continue
+            earned = self.state.civilization_wins.get(civilization, 0)
+            cap = self.current_civilization_win_cap(civilization)
+            attainable = min(earned, target, cap if cap is not None else target)
+            if self.config.numbered_civilization_win_checks:
+                for win_number in range(1, attainable + 1):
                     name = civilization_win_location_name(civilization, win_number)
                     if name not in self._checks:
                         self._add_check(name, outcome)
-        else:
-            for threshold in self.config.win_thresholds:
-                name = win_location_name(threshold)
-                if previous_wins < threshold <= self.state.total_wins and name not in self._checks:
-                    self._add_check(name, outcome)
-
-            if self.config.civ_sanity:
+            elif attainable >= 1:
                 name = civilization_location_name(civilization)
                 if name not in self._checks:
                     self._add_check(name, outcome)
+
+    @staticmethod
+    def _clamp_cap_items(count: int, stages: tuple[int, ...]) -> int:
+        if not stages:
+            return 0
+        return min(max(0, int(count)), len(stages) - 1)
+
+    @staticmethod
+    def _current_cap(stages: tuple[int, ...], item_count: int) -> int | None:
+        if not stages:
+            return None
+        return stages[min(max(0, item_count), len(stages) - 1)]
 
     def _add_check(self, name: str, outcome: TrackingOutcome) -> None:
         self._checks.add(name)
@@ -373,6 +500,7 @@ class MatchTracker:
         outcome.new_checks.append(name)
 
     def _remember_game(self, match: ParsedMatch) -> None:
+        self.state.pending_games.pop(str(match.game_id), None)
         self._seen.add(match.game_id)
         self.state.seen_game_ids.append(match.game_id)
         self.state.last_game_id = match.game_id
@@ -382,6 +510,17 @@ class MatchTracker:
         )
         if self.state.cursor_started_at is None or match.started_at > self.state.cursor_started_at:
             self.state.cursor_started_at = match.started_at
+
+    def _defer_game(self, match: ParsedMatch) -> None:
+        self.state.pending_games[str(match.game_id)] = match.started_at
+        self.state.last_game_id = match.game_id
+        self.state.last_game_summary = (
+            f"Awaiting result as {CIVILIZATIONS.get(match.civilization or '', 'Unknown')} "
+            f"in {match.mode}"
+        )
+
+    def pending_cursor_started_at(self) -> float | None:
+        return min(self.state.pending_games.values(), default=None)
 
     def _consume_death_link_if_applicable(self, completion: float) -> bool:
         received = self.state.pending_death_received_at

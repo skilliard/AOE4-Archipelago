@@ -8,9 +8,12 @@ from Options import OptionError
 from test.bases import WorldTestBase
 
 from aoe4.constants import (
+    PROGRESSIVE_TOTAL_WIN_CAP,
     civilization_location_name,
     civilization_unlock_name,
     civilization_win_location_name,
+    progressive_civilization_win_cap_name,
+    progressive_win_cap_stages,
     win_location_name,
 )
 from aoe4.items import FILLER_ITEM_NAME
@@ -26,7 +29,13 @@ class DefaultWorldTests(WorldTestBase):
         precollected = self.multiworld.precollected_items[1]
         assert len(precollected) == 1
         assert precollected[0].name.endswith(" Civilization Unlock")
-        assert sum(item.name == FILLER_ITEM_NAME for item in self.multiworld.itempool) == 26
+        assert sum(item.name == FILLER_ITEM_NAME for item in self.multiworld.itempool) == 22
+        assert sum(item.name == PROGRESSIVE_TOTAL_WIN_CAP for item in self.multiworld.itempool) == 4
+        assert all(
+            item.classification & ItemClassification.progression
+            for item in self.multiworld.itempool
+            if item.name == PROGRESSIVE_TOTAL_WIN_CAP
+        )
         unlocks = [item for item in self.multiworld.itempool if item.name.endswith(" Civilization Unlock")]
         assert len(unlocks) == 22
         assert all(item.classification & ItemClassification.progression for item in unlocks)
@@ -59,6 +68,7 @@ def test_selected_and_random_starting_civilizations():
             "goal_civilizations": ["english"],
             "starting_civilization": "french",
             "civ_sanity": False,
+            "total_win_goal": 1,
             "win_check_count": 1,
         }
     )
@@ -71,6 +81,7 @@ def test_selected_and_random_starting_civilizations():
             "goal_civilizations": ["english"],
             "starting_civilization": "random",
             "civ_sanity": False,
+            "total_win_goal": 1,
             "win_check_count": 1,
         },
         seed=88,
@@ -81,6 +92,7 @@ def test_selected_and_random_starting_civilizations():
             "goal_civilizations": ["english"],
             "starting_civilization": "random",
             "civ_sanity": False,
+            "total_win_goal": 1,
             "win_check_count": 1,
         },
         seed=88,
@@ -96,6 +108,7 @@ def test_multiple_starting_civilizations_are_deterministic_and_reduce_unlock_ite
         "starting_civilization": "french",
         "starting_civs": 3,
         "civ_sanity": False,
+        "total_win_goal": 1,
         "win_check_count": 1,
     }
     first = build_world(options, seed=77)
@@ -172,7 +185,11 @@ def test_civilization_win_goal_uses_goal_civilizations_and_creates_numbered_chec
     }
     assert regular_locations == expected_locations
     assert len(harness.multiworld.itempool) == 15
-    assert sum(item.name == FILLER_ITEM_NAME for item in harness.multiworld.itempool) == 13
+    assert sum(item.name == FILLER_ITEM_NAME for item in harness.multiworld.itempool) == 1
+    assert sum(
+        item.name.startswith("Progressive ") and item.name.endswith(" Win Cap")
+        for item in harness.multiworld.itempool
+    ) == 12
     assert sum(
         item.name.endswith(" Civilization Unlock") for item in harness.multiworld.itempool
     ) == 2
@@ -189,6 +206,18 @@ def test_civilization_win_goal_uses_goal_civilizations_and_creates_numbered_chec
         )
         assert not location.can_reach(state)
     state.collect(harness.world.create_item(civilization_unlock_name(locked_civilization)))
+    assert harness.multiworld.get_location(
+        civilization_win_location_name(locked_civilization, 1), 1
+    ).can_reach(state)
+    assert not harness.multiworld.get_location(
+        civilization_win_location_name(locked_civilization, 2), 1
+    ).can_reach(state)
+    for _ in range(4):
+        state.collect(
+            harness.world.create_item(
+                progressive_civilization_win_cap_name(locked_civilization)
+            )
+        )
     assert all(
         harness.multiworld.get_location(
             civilization_win_location_name(locked_civilization, win_number), 1
@@ -213,6 +242,7 @@ def test_total_and_rank_goals_use_civilization_pool_and_ignore_goal_civilization
             "goal_civilizations": ["malians"],
             "starting_civilization": "french",
             "civ_sanity": False,
+            "total_win_goal": 1,
             "win_check_count": 1,
         }
     )
@@ -272,6 +302,11 @@ def test_single_civilization_win_goal_is_valid_and_needs_no_unlock_item():
         {"civilization_pool": ["english", "french", "rus"], "goal_civilizations": ["english"], "civ_sanity": False, "win_check_count": 1},
         {"civilization_pool": ["english", "french"], "goal_civilizations": ["english"], "starting_civs": 3},
         {"goal": "civilization_wins", "goal_civilizations": ["english", "french"], "starting_civs": 3},
+        {"civilization_pool": ["english", "french"], "starting_civilizations": ["english", "rus"]},
+        {
+            "civilization_pool": ["english", "french", "malians", "rus", "mongols", "chinese"],
+            "starting_civilizations": ["english", "french", "malians", "rus", "mongols", "chinese"],
+        },
     ],
 )
 def test_invalid_options(options):
@@ -287,7 +322,8 @@ def test_slot_data_has_resolved_values_and_no_credentials():
             "starting_civilization": "random",
             "civ_sanity": False,
             "win_check_interval": 3,
-            "win_check_count": 2,
+            "win_check_count": 5,
+            "total_win_goal": 6,
             "include_custom_games": True,
         }
     )
@@ -295,10 +331,135 @@ def test_slot_data_has_resolved_values_and_no_credentials():
     assert data["starting_civilization"] in {"english", "french"}
     assert data["starting_civs"] == 1
     assert data["starting_civilizations"] == [data["starting_civilization"]]
-    assert data["win_thresholds"] == [3, 6]
+    assert data["win_thresholds"] == [3, 6, 9, 12, 15]
+    assert data["total_win_cap_stages"] == [3, 6, 9, 12, 15]
     assert data["include_custom_games"] is True
     assert data["civilization_win_location_ids"] == {}
-    assert data["world_version"] == "0.4.0"
+    assert data["world_version"] == "0.5.0"
     serialized_keys = " ".join(data).lower()
     assert "api" not in serialized_keys
     assert "profile" not in serialized_keys
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        (50, (10, 20, 30, 40, 50)),
+        (25, (5, 10, 15, 20, 25)),
+        (6, (2, 3, 4, 5, 6)),
+        (4, (1, 2, 3, 4)),
+        (1, (1,)),
+    ],
+)
+def test_progressive_win_cap_stage_math(target, expected):
+    assert progressive_win_cap_stages(target) == expected
+
+
+def test_total_win_caps_use_largest_target_and_gate_locations_and_goal():
+    harness = build_world(
+        {
+            "civilization_pool": ["english", "french"],
+            "starting_civilizations": ["english", "french"],
+            "civ_sanity": False,
+            "total_win_goal": 50,
+            "win_check_interval": 1,
+            "win_check_count": 50,
+        }
+    )
+    assert harness.world.total_win_cap_stages == (10, 20, 30, 40, 50)
+    assert sum(item.name == PROGRESSIVE_TOTAL_WIN_CAP for item in harness.multiworld.itempool) == 4
+
+    state = CollectionState(harness.multiworld)
+    assert harness.multiworld.get_location(win_location_name(10), 1).can_reach(state)
+    assert not harness.multiworld.get_location(win_location_name(11), 1).can_reach(state)
+    assert not harness.multiworld.get_location("AOE4 Goal Achieved", 1).can_reach(state)
+    state.collect(harness.world.create_item(PROGRESSIVE_TOTAL_WIN_CAP))
+    assert harness.multiworld.get_location(win_location_name(20), 1).can_reach(state)
+    assert not harness.multiworld.get_location(win_location_name(21), 1).can_reach(state)
+    for _ in range(3):
+        state.collect(harness.world.create_item(PROGRESSIVE_TOTAL_WIN_CAP))
+    assert harness.multiworld.get_location(win_location_name(50), 1).can_reach(state)
+    assert harness.multiworld.get_location("AOE4 Goal Achieved", 1).can_reach(state)
+
+
+def test_total_cap_target_uses_goal_when_it_exceeds_highest_check():
+    harness = build_world(
+        {
+            "civilization_pool": ["english", "french"],
+            "starting_civilizations": ["english", "french"],
+            "civ_sanity": False,
+            "total_win_goal": 25,
+            "win_check_interval": 2,
+            "win_check_count": 5,
+        }
+    )
+    assert harness.world.win_thresholds[-1] == 10
+    assert harness.world.total_win_cap_stages == (5, 10, 15, 20, 25)
+
+
+def test_explicit_starting_list_is_exact_and_takes_precedence():
+    harness = build_world(
+        {
+            "civilization_pool": ["english", "french", "malians", "rus"],
+            "starting_civilizations": ["rus", "english", "french"],
+            "starting_civilization": "malians",
+            "starting_civs": 1,
+            "civ_sanity": False,
+            "total_win_goal": 1,
+            "win_check_count": 1,
+        }
+    )
+    assert harness.world.starting_civilizations == ("english", "french", "rus")
+    assert {
+        item.name for item in harness.multiworld.precollected_items[1]
+    } == {
+        civilization_unlock_name("english"),
+        civilization_unlock_name("french"),
+        civilization_unlock_name("rus"),
+    }
+
+
+def test_multi_win_civ_sanity_generates_numbered_checks_and_independent_caps():
+    harness = build_world(
+        {
+            "goal": "solo_rank",
+            "eligible_match_modes": ["rm_solo"],
+            "civilization_pool": ["english", "french"],
+            "starting_civilizations": ["english", "french"],
+            "civ_sanity": True,
+            "civ_sanity_win_count": 3,
+            "win_check_count": 5,
+        }
+    )
+    assert harness.world.civilization_win_cap_stages == (1, 2, 3)
+    assert sum(
+        item.name == progressive_civilization_win_cap_name("english")
+        for item in harness.multiworld.itempool
+    ) == 2
+    data = harness.world.fill_slot_data()
+    assert data["civilization_location_ids"] == {}
+    assert set(data["civilization_win_location_ids"]) == {"english", "french"}
+
+    state = CollectionState(harness.multiworld)
+    second_english = harness.multiworld.get_location(
+        civilization_win_location_name("english", 2), 1
+    )
+    second_french = harness.multiworld.get_location(
+        civilization_win_location_name("french", 2), 1
+    )
+    assert not second_english.can_reach(state)
+    state.collect(harness.world.create_item(progressive_civilization_win_cap_name("english")))
+    assert second_english.can_reach(state)
+    assert not second_french.can_reach(state)
+
+
+def test_progressive_items_require_enough_locations():
+    with pytest.raises(OptionError, match="progressive win caps"):
+        build_world(
+            {
+                "civilization_pool": ["english", "french"],
+                "civ_sanity": False,
+                "total_win_goal": 50,
+                "win_check_count": 1,
+            }
+        )

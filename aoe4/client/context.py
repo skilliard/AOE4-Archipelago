@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from ..constants import (
 )
 from .api import AOE4WorldClient, AOE4WorldError
 from .state import ProfileStore, StateStore, state_key
-from .tracker import MatchTracker, TrackerConfig, format_timestamp
+from .tracker import MatchTracker, TrackerConfig, TrackingOutcome, format_timestamp
 from .tracker_view import CivilizationTrackerEntry, build_civilization_tracker_entries
 
 POLL_INTERVAL_SECONDS = 60
@@ -93,6 +94,7 @@ class AgeOfEmpiresIVContext(CommonContext):
         self._storage_waiters: dict[str, asyncio.Future[Any]] = {}
         self._queued_death_received_at: float | None = None
         self._tracking_task: asyncio.Task[None] | None = None
+        self._cap_inventory_dirty = True
 
     async def server_auth(self, password_requested: bool = False) -> None:
         if password_requested and not self.password:
@@ -272,10 +274,14 @@ class AgeOfEmpiresIVContext(CommonContext):
             self._initialized_token = None
             self._tracking_blocked = False
             self._force_incremental_fetch = True
+            self._cap_inventory_dirty = True
             death_link = bool(self.slot_data.get("death_link", False))
             asyncio.create_task(self.update_death_link(death_link), name="AOE4 DeathLink tag update")
             if not death_link:
                 self._queued_death_received_at = None
+        elif cmd == "ReceivedItems":
+            # CommonContext updates items_received before dispatching this hook.
+            self._cap_inventory_dirty = True
         elif cmd == "SetReply":
             future = self._storage_waiters.pop(args.get("key"), None)
             if future is not None and not future.done():
@@ -309,8 +315,11 @@ class AgeOfEmpiresIVContext(CommonContext):
                     token = (self._connected_nonce, self._credentials_nonce)
                     if self._initialized_token != token:
                         await self._initialize_tracking(token)
-                    if self._initialized_token == token and time.time() >= self.next_poll_at:
-                        await self._poll()
+                    if self._initialized_token == token:
+                        if self._cap_inventory_dirty:
+                            await self._reconcile_cap_inventory()
+                        if time.time() >= self.next_poll_at:
+                            await self._poll()
             except ProfileBindingError as error:
                 self.binding_status = str(error)
                 self.api_health = "Tracking blocked by profile binding"
@@ -385,8 +394,7 @@ class AgeOfEmpiresIVContext(CommonContext):
             self._queued_death_received_at = None
         self.tracker.update_ranks(profile)
         self.profile_store.save(self.profile_id)
-        self._save_state()
-        await self._send_goal_if_needed()
+        await self._reconcile_cap_inventory()
 
         self._initialized_token = token
         self._force_incremental_fetch = True
@@ -408,7 +416,10 @@ class AgeOfEmpiresIVContext(CommonContext):
             },
             sort_keys=True,
         )
-        should_fetch = self._force_incremental_fetch or signature != self.tracker.state.last_api_game_signature
+        should_fetch = (
+            self._force_incremental_fetch
+            or signature != self.tracker.state.last_api_game_signature
+        )
         if should_fetch:
             if self._api_key:
                 cursor = (
@@ -417,9 +428,14 @@ class AgeOfEmpiresIVContext(CommonContext):
                 )
             else:
                 cursor = self.tracker.state.cursor_started_at or self.tracker.config.tracking_started_at
+            pending_cursor = self.tracker.pending_cursor_started_at()
+            if pending_cursor is not None:
+                cursor = min(cursor, pending_cursor)
             since = max(self.tracker.config.tracking_started_at, cursor - CURSOR_OVERLAP_SECONDS)
             games = await self._api.games_since(self.profile_id, since)
             profile = await self._api.profile(self.profile_id)
+            if self._cap_inventory_dirty:
+                await self._reconcile_cap_inventory()
             outcome = self.tracker.process_games(games, self.unlocked_civilizations(), now)
             if self._api_key and self.tracker.state.cursor_started_at is not None:
                 credentialed_cursor = self.tracker.state.credentialed_cursor_started_at
@@ -434,15 +450,29 @@ class AgeOfEmpiresIVContext(CommonContext):
             self.tracker.expire_death_link(now)
             self._save_state()
 
-            location_ids = self._location_ids(outcome.new_checks)
-            if location_ids:
-                sent = await self.check_locations(location_ids)
-                if sent:
-                    logger.info("Sent %d AOE4 location check(s).", len(sent))
-            for cause in outcome.send_deaths:
-                player_name = self.player_names.get(self.slot, "AOE4 player")
-                await self.send_death(f"{player_name} {cause}.")
-            await self._send_goal_if_needed()
+            await self._submit_tracking_outcome(outcome)
+        elif self.tracker.state.pending_games:
+            # The cached last-game endpoint is cheap to poll, but its signature
+            # may remain stable while AOE4World fills in a delayed result. Retry
+            # only the unresolved game records instead of refetching all history.
+            pending_games = await asyncio.gather(
+                *(
+                    self._api.game(self.profile_id, int(game_id))
+                    for game_id in self.tracker.state.pending_games
+                )
+            )
+            outcome = self.tracker.process_games(
+                pending_games, self.unlocked_civilizations(), now
+            )
+            if self._api_key and self.tracker.state.cursor_started_at is not None:
+                credentialed_cursor = self.tracker.state.credentialed_cursor_started_at
+                self.tracker.state.credentialed_cursor_started_at = max(
+                    credentialed_cursor or self.tracker.config.tracking_started_at,
+                    self.tracker.state.cursor_started_at,
+                )
+            self.tracker.expire_death_link(now)
+            self._save_state()
+            await self._submit_tracking_outcome(outcome)
         elif self.tracker.expire_death_link(now):
             self._save_state()
 
@@ -450,6 +480,52 @@ class AgeOfEmpiresIVContext(CommonContext):
         self._backoff_seconds = POLL_INTERVAL_SECONDS
         self.next_poll_at = time.time() + POLL_INTERVAL_SECONDS
         self.api_health = "Healthy; polling every 60 seconds"
+
+    def _cap_inventory(self) -> tuple[int, dict[str, int]]:
+        received_item_counts = Counter(int(item.item) for item in self.items_received)
+        total_item_id = self.slot_data.get("progressive_total_win_cap_item_id")
+        total_count = (
+            received_item_counts[int(total_item_id)] if total_item_id is not None else 0
+        )
+        civilization_counts = {
+            str(civilization): received_item_counts[int(item_id)]
+            for civilization, item_id in self.slot_data.get(
+                "progressive_civilization_win_cap_item_ids", {}
+            ).items()
+        }
+        return total_count, civilization_counts
+
+    async def _reconcile_cap_inventory(self) -> None:
+        if self.tracker is None:
+            return
+        self._cap_inventory_dirty = False
+        try:
+            total_count, civilization_counts = self._cap_inventory()
+            outcome = self.tracker.update_cap_inventory(total_count, civilization_counts)
+            self._save_state()
+            await self._submit_tracking_outcome(outcome)
+        except Exception:
+            self._cap_inventory_dirty = True
+            raise
+
+    async def _submit_tracking_outcome(self, outcome: TrackingOutcome) -> None:
+        location_ids = self._location_ids(outcome.new_checks)
+        if self.tracker is not None and self.missing_locations:
+            # Local completion is durable. If an earlier send was interrupted,
+            # use the server's missing set to retry without reprocessing matches.
+            location_ids.update(
+                self._location_ids(self.tracker.state.completed_checks).intersection(
+                    self.missing_locations
+                )
+            )
+        if location_ids:
+            sent = await self.check_locations(location_ids)
+            if sent:
+                logger.info("Sent %d AOE4 location check(s).", len(sent))
+        for cause in outcome.send_deaths:
+            player_name = self.player_names.get(self.slot, "AOE4 player")
+            await self.send_death(f"{player_name} {cause}.")
+        await self._send_goal_if_needed()
 
     async def _send_goal_if_needed(self) -> None:
         if self.tracker is None or not self.tracker.goal_reached() or self.tracker.state.goal_sent:
@@ -479,11 +555,29 @@ class AgeOfEmpiresIVContext(CommonContext):
         if not self.slot_data:
             return ()
         wins = self.tracker.state.civilization_wins if self.tracker is not None else {}
+        caps = (
+            {
+                civilization: self.tracker.current_civilization_win_cap(civilization)
+                for civilization in self.slot_data.get("civilization_pool", ())
+            }
+            if self.tracker is not None
+            else {}
+        )
         return build_civilization_tracker_entries(
             self.slot_data,
             self.unlocked_civilizations(),
             wins,
+            caps,
         )
+
+    def total_win_tracker_progress(self) -> tuple[int, int | None, int | None]:
+        stages = tuple(int(value) for value in self.slot_data.get("total_win_cap_stages", ()))
+        earned = self.tracker.state.total_wins if self.tracker is not None else 0
+        if self.tracker is not None:
+            current_cap = self.tracker.current_total_win_cap()
+        else:
+            current_cap = stages[0] if stages else None
+        return earned, current_cap, stages[-1] if stages else None
 
     def _location_ids(self, names: list[str]) -> set[int]:
         civ_ids = self.slot_data.get("civilization_location_ids", {})
@@ -587,7 +681,12 @@ class AgeOfEmpiresIVContext(CommonContext):
         configured_location_ids = self._configured_location_ids()
         checked_count = len(configured_location_ids.intersection(self.checked_locations))
         lines.append(f"Checks: {checked_count}/{len(configured_location_ids)} confirmed by the AP server")
-        lines.append(f"Credited wins: {state.total_wins}; recent match: {state.last_game_summary}")
+        current_cap = self.tracker.current_total_win_cap()
+        cap_text = str(current_cap) if current_cap is not None else "unrestricted"
+        lines.append(
+            f"Total wins: {state.total_wins} earned / {cap_text} currently attainable; "
+            f"recent match: {state.last_game_summary}"
+        )
         lines.append(
             f"Ranks: Solo {RANK_DISPLAY_NAMES.get(state.solo_rank or '', state.solo_rank or 'Unranked')}; "
             f"Team {RANK_DISPLAY_NAMES.get(state.team_rank or '', state.team_rank or 'Unranked')}"
@@ -607,10 +706,17 @@ class AgeOfEmpiresIVContext(CommonContext):
             return "Goal: waiting for tracking"
         config, state = self.tracker.config, self.tracker.state
         if config.goal == "total_wins":
-            return f"Goal: {state.total_wins}/{config.total_win_goal} total wins"
+            cap = self.tracker.current_total_win_cap()
+            cap_text = str(cap) if cap is not None else "unrestricted"
+            return (
+                f"Goal: {state.total_wins} earned / {cap_text} currently attainable / "
+                f"{config.total_win_goal} required total wins"
+            )
         if config.goal == "civilization_wins":
             progress = ", ".join(
-                f"{CIVILIZATIONS[civ]} {state.civilization_wins.get(civ, 0)}/{config.wins_per_goal_civilization}"
+                f"{CIVILIZATIONS[civ]} {state.civilization_wins.get(civ, 0)} earned / "
+                f"{self.tracker.current_civilization_win_cap(civ) or 'unrestricted'} attainable / "
+                f"{config.wins_per_goal_civilization} required"
                 for civ in sorted(config.goal_civilizations)
             )
             return f"Goal: {progress}"

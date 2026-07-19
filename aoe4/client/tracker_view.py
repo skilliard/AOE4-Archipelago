@@ -42,6 +42,7 @@ class CivilizationTrackerEntry:
     unlocked: bool
     credited_wins: int
     required_wins: int
+    attainable_wins: int | None
 
     @property
     def wins_remaining(self) -> int:
@@ -49,13 +50,20 @@ class CivilizationTrackerEntry:
 
     @property
     def requirement_complete(self) -> bool:
-        return self.wins_remaining == 0
+        return self.wins_remaining == 0 and (
+            self.attainable_wins is None or self.attainable_wins >= self.required_wins
+        )
+
+    @property
+    def cap_blocked(self) -> bool:
+        return self.wins_remaining == 0 and not self.requirement_complete
 
 
 def build_civilization_tracker_entries(
     slot_data: Mapping[str, Any],
     unlocked_civilizations: Iterable[str],
     civilization_wins: Mapping[str, int],
+    civilization_win_caps: Mapping[str, int | None] | None = None,
 ) -> tuple[CivilizationTrackerEntry, ...]:
     """Build the read-only civilization progress shown in the Tracker tab.
 
@@ -72,14 +80,27 @@ def build_civilization_tracker_entries(
     per_goal_target = int(slot_data.get("wins_per_goal_civilization", 1))
     civilization_goal = slot_data.get("goal") == "civilization_wins"
     civ_sanity = bool(slot_data.get("civ_sanity", False))
+    civ_sanity_target = int(slot_data.get("civ_sanity_win_count", 1))
+    configured_cap_stages = tuple(
+        int(value) for value in slot_data.get("civilization_win_cap_stages", ())
+    )
+    civilization_win_caps = civilization_win_caps or {}
 
     entries: list[CivilizationTrackerEntry] = []
     for civilization, name in CIVILIZATIONS.items():
         if civilization not in pool:
             continue
-        required_wins = 1 if civ_sanity else 0
+        required_wins = civ_sanity_target if civ_sanity else 0
         if civilization_goal and civilization in goal_civilizations:
             required_wins = max(required_wins, per_goal_target)
+        if required_wins == 0:
+            attainable_wins: int | None = 0
+        elif civilization in civilization_win_caps:
+            attainable_wins = civilization_win_caps[civilization]
+        elif configured_cap_stages:
+            attainable_wins = configured_cap_stages[0]
+        else:
+            attainable_wins = None
         entries.append(
             CivilizationTrackerEntry(
                 civilization=civilization,
@@ -87,6 +108,7 @@ def build_civilization_tracker_entries(
                 unlocked=civilization in unlocked,
                 credited_wins=max(0, int(civilization_wins.get(civilization, 0))),
                 required_wins=required_wins,
+                attainable_wins=attainable_wins,
             )
         )
     return tuple(entries)

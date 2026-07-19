@@ -40,6 +40,10 @@ class AOE4WorldClient:
                 params["include_custom"] = "true"
         return await self._get_json(f"/players/{profile_id}/games/last", params or None)
 
+    async def game(self, profile_id: int, game_id: int) -> Mapping[str, Any]:
+        params = {"api_key": self._api_key} if self._api_key else None
+        return await self._get_json(f"/players/{profile_id}/games/{game_id}", params)
+
     async def games_since(self, profile_id: int, since: float) -> list[Mapping[str, Any]]:
         games: list[Mapping[str, Any]] = []
         page = 1
