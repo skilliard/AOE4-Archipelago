@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 
 GAME_NAME = "Age of Empires IV"
-WORLD_VERSION = "0.5.0"
+WORLD_VERSION = "0.5.1"
 MINIMUM_AP_VERSION = "0.6.7"
 
 # Stable YAML/API identifiers mapped to the names shown by AOE4World and the AP client.
@@ -83,6 +83,10 @@ PROGRESSIVE_TOTAL_WIN_CAP = "Progressive Total Win Cap"
 
 def progressive_civilization_win_cap_name(civilization: str) -> str:
     return f"Progressive {CIVILIZATIONS[civilization]} Win Cap"
+
+
+def progressive_civilization_name(civilization: str) -> str:
+    return f"Progressive {CIVILIZATIONS[civilization]} Civilization"
 
 
 def progressive_win_cap_stages(target: int) -> tuple[int, ...]:
