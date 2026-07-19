@@ -17,15 +17,15 @@ Goals:
 
 Other options:
 
-Civsanity: send 1 location check for winning as each civ
+Civsanity: send one or more location checks for winning as each civ
 
-Civilization selection is goal-dependent. A `civilization_wins` seed uses `goal_civilizations` as its complete unlock pool and creates one numbered check for every required win with every selected civilization. Total-win and rank seeds use `civilization_pool` instead and retain the configurable global-win and civilization-sanity checks. `starting_civs` controls how many members of that active pool begin unlocked; `starting_civilization` selects the guaranteed first one.
+Civilization selection is goal-dependent. A `civilization_wins` seed uses `goal_civilizations` as its complete unlock pool and creates one numbered check for every required win with every selected civilization. Total-win and rank seeds use `civilization_pool` instead and retain configurable global-win and civilization-sanity checks. The first civilization item, such as **Progressive English Civilization**, unlocks that civilization and its initial win band; later copies raise that cap while earned wins continue accumulating for retroactive credit. `starting_civs` selects up to five deterministic random starts, while a non-empty `starting_civilizations` list supplies the exact starting set.
 
 # Note: If civsanity is disabled, you will need to have at least as many win checks as civilizations in your civ pool for the game to generate.
 
 # Tracker
 
-The client also includes a live **Tracker** tab showing available civilizations, unlocked civilizations that still need required wins, credited per-civilization progress, and locked civilizations. Civilization flags are packaged from AOE4World Explorer for offline display.
+The client also includes a live **Tracker** tab showing available civilizations, unlocked civilizations that still need required wins, earned/attainable total and per-civilization progress, and locked civilizations. Civilization flags are packaged from AOE4World Explorer for offline display.
 
 # FAQ:
 

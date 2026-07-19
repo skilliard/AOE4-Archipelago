@@ -7,6 +7,7 @@ from .constants import (
     GAME_NAME,
     PROGRESSIVE_TOTAL_WIN_CAP,
     civilization_unlock_name,
+    progressive_civilization_name,
     progressive_civilization_win_cap_name,
 )
 
@@ -19,9 +20,17 @@ ITEM_NAME_TO_ID = {
 }
 ITEM_NAME_TO_ID[FILLER_ITEM_NAME] = ITEM_ID_BASE + 100
 ITEM_NAME_TO_ID[PROGRESSIVE_TOTAL_WIN_CAP] = ITEM_ID_BASE + 200
+# Keep the 0.4/0.5.0 civilization IDs registered so legacy seed data remains
+# decodable. New worlds generate only the unified +400 progressive items.
 ITEM_NAME_TO_ID.update(
     {
         progressive_civilization_win_cap_name(civilization): ITEM_ID_BASE + 300 + index
+        for index, civilization in enumerate(CIVILIZATIONS, start=1)
+    }
+)
+ITEM_NAME_TO_ID.update(
+    {
+        progressive_civilization_name(civilization): ITEM_ID_BASE + 400 + index
         for index, civilization in enumerate(CIVILIZATIONS, start=1)
     }
 )

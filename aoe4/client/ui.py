@@ -316,7 +316,7 @@ class AgeOfEmpiresIVManager(GameManager):
         row.add_widget(flag)
 
         if row_kind == "locked":
-            status = "Locked - receive its Civilization Unlock item"
+            status = f"Locked - receive Progressive {entry.name} Civilization"
             color = (0.56, 0.58, 0.63, 1)
         elif entry.required_wins == 0:
             status = (

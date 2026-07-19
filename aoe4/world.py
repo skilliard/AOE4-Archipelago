@@ -15,9 +15,8 @@ from .constants import (
     PROGRESSIVE_TOTAL_WIN_CAP,
     WORLD_VERSION,
     civilization_location_name,
-    civilization_unlock_name,
     civilization_win_location_name,
-    progressive_civilization_win_cap_name,
+    progressive_civilization_name,
     progressive_items_required,
     progressive_win_cap_stages,
     win_location_name,
@@ -43,6 +42,7 @@ class AgeOfEmpiresIVWorld(World):
     win_thresholds: tuple[int, ...]
     total_win_cap_stages: tuple[int, ...]
     civilization_win_cap_stages: tuple[int, ...]
+    civilization_progression_tiers: int
     civilization_win_check_count: int
     civ_sanity_win_count: int
     civ_sanity_enabled: bool
@@ -102,6 +102,9 @@ class AgeOfEmpiresIVWorld(World):
         self.total_win_cap_stages = progressive_win_cap_stages(total_win_cap_target)
         self.civilization_win_cap_stages = progressive_win_cap_stages(
             self.civilization_win_check_count
+        )
+        self.civilization_progression_tiers = max(
+            1, len(self.civilization_win_cap_stages)
         )
 
         prefix = f"[{GAME_NAME} - {self.player_name}]"
@@ -163,12 +166,12 @@ class AgeOfEmpiresIVWorld(World):
         required_progression_items = (
             required_unlocks
             + max(0, len(self.total_win_cap_stages) - 1)
-            + len(self.civilization_pool) * max(0, len(self.civilization_win_cap_stages) - 1)
+            + len(self.civilization_pool) * (self.civilization_progression_tiers - 1)
         )
         if location_count < required_progression_items:
             raise OptionError(
                 f"{prefix} generates {location_count} locations but needs at least "
-                f"{required_progression_items} locations for civilization unlocks and progressive win caps. "
+                f"{required_progression_items} locations for progressive civilization and win-cap items. "
                 "Increase win_check_count or civilization win checks, enable civ_sanity, or add starting civilizations."
             )
 
@@ -223,18 +226,19 @@ class AgeOfEmpiresIVWorld(World):
                     set_rule(
                         self.get_location(civilization_win_location_name(civilization, win_number)),
                         lambda state,
-                        unlock=civilization_unlock_name(civilization),
-                        cap_name=progressive_civilization_win_cap_name(civilization),
-                        cap_count=cap_items: (
-                            state.has(unlock, self.player)
-                            and state.has(cap_name, self.player, cap_count)
+                        progressive_name=progressive_civilization_name(civilization),
+                        tier=cap_items + 1: state.has(
+                            progressive_name, self.player, tier
                         ),
                     )
         elif self.civ_sanity_enabled:
             for civilization in self.civilization_pool:
                 set_rule(
                     self.get_location(civilization_location_name(civilization)),
-                    lambda state, unlock=civilization_unlock_name(civilization): state.has(unlock, self.player),
+                    lambda state,
+                    progressive_name=progressive_civilization_name(civilization): state.has(
+                        progressive_name, self.player
+                    ),
                 )
 
         for threshold in self.win_thresholds:
@@ -247,16 +251,18 @@ class AgeOfEmpiresIVWorld(World):
             )
 
         if self.goal == "civilization_wins":
-            goal_unlocks = tuple(civilization_unlock_name(civ) for civ in self.goal_civilizations)
-            cap_items = max(0, len(self.civilization_win_cap_stages) - 1)
-            cap_names = tuple(
-                progressive_civilization_win_cap_name(civ) for civ in self.goal_civilizations
+            progressive_names = tuple(
+                progressive_civilization_name(civ) for civ in self.goal_civilizations
             )
             set_rule(
                 self.get_location("AOE4 Goal Achieved"),
-                lambda state: (
-                    state.has_all(goal_unlocks, self.player)
-                    and all(state.has(cap_name, self.player, cap_items) for cap_name in cap_names)
+                lambda state: all(
+                    state.has(
+                        progressive_name,
+                        self.player,
+                        self.civilization_progression_tiers,
+                    )
+                    for progressive_name in progressive_names
                 ),
             )
         elif self.goal == "total_wins":
@@ -274,28 +280,28 @@ class AgeOfEmpiresIVWorld(World):
 
     def create_items(self) -> None:
         for civilization in self.starting_civilizations:
-            self.push_precollected(self.create_item(civilization_unlock_name(civilization)))
+            self.push_precollected(
+                self.create_item(progressive_civilization_name(civilization))
+            )
 
         starting_civilizations = set(self.starting_civilizations)
         itempool = [
-            self.create_item(civilization_unlock_name(civilization))
+            self.create_item(progressive_civilization_name(civilization))
             for civilization in self.civilization_pool
-            if civilization not in starting_civilizations
+            for _ in range(
+                self.civilization_progression_tiers
+                - int(civilization in starting_civilizations)
+            )
         ]
         itempool.extend(
             self.create_item(PROGRESSIVE_TOTAL_WIN_CAP)
             for _ in range(max(0, len(self.total_win_cap_stages) - 1))
         )
-        for civilization in self.civilization_pool:
-            itempool.extend(
-                self.create_item(progressive_civilization_win_cap_name(civilization))
-                for _ in range(max(0, len(self.civilization_win_cap_stages) - 1))
-            )
         empty_location_count = len(self.multiworld.get_unfilled_locations(self.player))
         filler_count = empty_location_count - len(itempool)
         if filler_count < 0:
             raise OptionError(
-                f"[{GAME_NAME} - {self.player_name}] generated fewer locations than required unlock items."
+                f"[{GAME_NAME} - {self.player_name}] generated fewer locations than required progression items."
             )
         itempool.extend(self.create_filler() for _ in range(filler_count))
         self.multiworld.itempool += itempool
@@ -328,19 +334,15 @@ class AgeOfEmpiresIVWorld(World):
             "civilization_win_cap_stages": list(self.civilization_win_cap_stages),
             "include_custom_games": bool(self.options.include_custom_games.value),
             "death_link": bool(self.options.death_link.value),
-            "item_name_to_id": {
-                civilization: self.item_name_to_id[civilization_unlock_name(civilization)]
+            "progressive_civilization_item_ids": {
+                civilization: self.item_name_to_id[
+                    progressive_civilization_name(civilization)
+                ]
                 for civilization in self.civilization_pool
             },
             "progressive_total_win_cap_item_id": self.item_name_to_id[
                 PROGRESSIVE_TOTAL_WIN_CAP
             ] if self.total_win_cap_stages else None,
-            "progressive_civilization_win_cap_item_ids": {
-                civilization: self.item_name_to_id[
-                    progressive_civilization_win_cap_name(civilization)
-                ]
-                for civilization in self.civilization_pool
-            } if self.civilization_win_cap_stages else {},
             "civilization_location_ids": {
                 civilization: self.location_name_to_id[civilization_location_name(civilization)]
                 for civilization in self.civilization_pool

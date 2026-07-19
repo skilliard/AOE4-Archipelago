@@ -21,6 +21,8 @@ from aoe4.constants import (
     PROGRESSIVE_TOTAL_WIN_CAP,
     civilization_unlock_name,
     civilization_win_location_name,
+    progressive_civilization_name,
+    progressive_civilization_win_cap_name,
 )
 from aoe4.items import ITEM_NAME_TO_ID
 from aoe4.locations import LOCATION_NAME_TO_ID
@@ -55,9 +57,9 @@ def slot_data(*, death_link=True, include_custom_games=False):
         "win_thresholds": [1, 2],
         "include_custom_games": include_custom_games,
         "death_link": death_link,
-        "item_name_to_id": {
-            "english": ITEM_NAME_TO_ID[civilization_unlock_name("english")],
-            "french": ITEM_NAME_TO_ID[civilization_unlock_name("french")],
+        "progressive_civilization_item_ids": {
+            "english": ITEM_NAME_TO_ID[progressive_civilization_name("english")],
+            "french": ITEM_NAME_TO_ID[progressive_civilization_name("french")],
         },
         "civilization_location_ids": {"english": 7411006, "french": 7411007},
         "win_location_ids": {"1": 7412001, "2": 7412002},
@@ -93,6 +95,119 @@ async def test_unlocked_civilizations_uses_resolved_starting_list_and_legacy_fal
 
     ctx.slot_data.pop("starting_civilizations")
     assert ctx.unlocked_civilizations() == {"english"}
+    await ctx.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unified_civilization_inventory_unlocks_then_advances_and_backfills(
+    tmp_path, monkeypatch
+):
+    assert AgeOfEmpiresIVContext.items_handling == 0b011
+    install_test_datapackage(monkeypatch)
+    monkeypatch.setattr(
+        context_module.Utils,
+        "user_path",
+        lambda *parts: str(tmp_path.joinpath(*parts)),
+    )
+    ctx = AgeOfEmpiresIVContext(initial_profile_id=123)
+    ctx.slot_data = slot_data(death_link=False)
+    ctx.slot_data.update(
+        {
+            "civ_sanity_win_count": 3,
+            "civilization_win_cap_stages": [1, 2, 3],
+            "civilization_location_ids": {},
+            "civilization_win_location_ids": {
+                "english": {str(number): 7_412_100 + number for number in range(1, 4)},
+                "french": {str(number): 7_412_200 + number for number in range(1, 4)},
+            },
+        }
+    )
+    config = TrackerConfig.from_slot_data(123, 1_000.0, ctx.slot_data)
+    ctx.tracker = MatchTracker(
+        config,
+        TrackerState(civilization_wins={"english": 3}),
+    )
+    sent_checks = []
+
+    async def check_locations(locations):
+        sent_checks.extend(sorted(locations))
+        return set(locations)
+
+    ctx.check_locations = check_locations
+    ctx.send_msgs = lambda messages: _record_messages([], messages)
+
+    await ctx._reconcile_cap_inventory()
+    assert ctx._cap_inventory()[1] == {"english": 0, "french": 0}
+    assert ctx.unlocked_civilizations() == {"english"}
+    assert ctx.tracker.current_civilization_win_cap("english") == 1
+    assert sent_checks == [7_412_101]
+
+    # A legacy unlock ID is ignored when the unified slot-data field is present.
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[civilization_unlock_name("french")])
+    )
+    assert ctx.unlocked_civilizations() == {"english"}
+
+    # The first unified French tier unlocks it without advancing past stage one.
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[progressive_civilization_name("french")])
+    )
+    await ctx._reconcile_cap_inventory()
+    assert ctx.unlocked_civilizations() == {"english", "french"}
+    assert ctx.tracker.current_civilization_win_cap("french") == 1
+
+    # English already owns its starting tier, so each received copy advances it.
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[progressive_civilization_name("english")])
+    )
+    await ctx._reconcile_cap_inventory()
+    assert ctx.tracker.current_civilization_win_cap("english") == 2
+    assert sent_checks[-1] == 7_412_102
+
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[progressive_civilization_name("english")])
+    )
+    await ctx._reconcile_cap_inventory()
+    assert ctx.tracker.current_civilization_win_cap("english") == 3
+    assert sent_checks[-1] == 7_412_103
+    await ctx.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_legacy_separate_cap_received_before_unlock_remains_supported(
+    tmp_path, monkeypatch
+):
+    install_test_datapackage(monkeypatch)
+    monkeypatch.setattr(
+        context_module.Utils,
+        "user_path",
+        lambda *parts: str(tmp_path.joinpath(*parts)),
+    )
+    ctx = AgeOfEmpiresIVContext(initial_profile_id=123)
+    ctx.slot_data = slot_data(death_link=False)
+    ctx.slot_data.pop("progressive_civilization_item_ids")
+    ctx.slot_data["item_name_to_id"] = {
+        "english": ITEM_NAME_TO_ID[civilization_unlock_name("english")],
+        "french": ITEM_NAME_TO_ID[civilization_unlock_name("french")],
+    }
+    ctx.slot_data["progressive_civilization_win_cap_item_ids"] = {
+        "english": ITEM_NAME_TO_ID[progressive_civilization_win_cap_name("english")],
+        "french": ITEM_NAME_TO_ID[progressive_civilization_win_cap_name("french")],
+    }
+
+    ctx.items_received.append(
+        SimpleNamespace(
+            item=ITEM_NAME_TO_ID[progressive_civilization_win_cap_name("french")]
+        )
+    )
+    assert ctx.unlocked_civilizations() == {"english"}
+    assert ctx._cap_inventory()[1]["french"] == 1
+
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[civilization_unlock_name("french")])
+    )
+    assert ctx.unlocked_civilizations() == {"english", "french"}
+    assert ctx._cap_inventory()[1]["french"] == 1
     await ctx.shutdown()
 
 
@@ -232,7 +347,9 @@ async def test_mocked_ap_api_reconnect_items_deathlink_and_goal(tmp_path, monkey
     assert ctx.tracker.state.goal_sent
 
     # A received death suppresses the next eligible match. The newly received civ item is honored.
-    ctx.items_received.append(SimpleNamespace(item=ITEM_NAME_TO_ID[civilization_unlock_name("french")]))
+    ctx.items_received.append(
+        SimpleNamespace(item=ITEM_NAME_TO_ID[progressive_civilization_name("french")])
+    )
     ctx.on_deathlink({"time": time.time() - 1, "source": "Friend", "cause": "test"})
     await asyncio.sleep(0.01)
     second_game = make_game(2, "win", "french", time.time(), duration=0)

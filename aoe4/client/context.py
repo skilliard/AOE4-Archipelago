@@ -60,7 +60,9 @@ class AgeOfEmpiresIVCommandProcessor(ClientCommandProcessor):
 
 class AgeOfEmpiresIVContext(CommonContext):
     game = GAME_NAME
-    items_handling = 0b111
+    # Starting civilization tiers come from slot data. Excluding precollected
+    # items here prevents those tiers from also appearing in items_received.
+    items_handling = 0b011
     command_processor = AgeOfEmpiresIVCommandProcessor
 
     def __init__(
@@ -487,12 +489,26 @@ class AgeOfEmpiresIVContext(CommonContext):
         total_count = (
             received_item_counts[int(total_item_id)] if total_item_id is not None else 0
         )
-        civilization_counts = {
-            str(civilization): received_item_counts[int(item_id)]
-            for civilization, item_id in self.slot_data.get(
-                "progressive_civilization_win_cap_item_ids", {}
-            ).items()
-        }
+        if "progressive_civilization_item_ids" in self.slot_data:
+            starting_civilizations = self._resolved_starting_civilizations()
+            civilization_counts = {
+                str(civilization): max(
+                    0,
+                    received_item_counts[int(item_id)]
+                    + int(str(civilization) in starting_civilizations)
+                    - 1,
+                )
+                for civilization, item_id in self.slot_data.get(
+                    "progressive_civilization_item_ids", {}
+                ).items()
+            }
+        else:
+            civilization_counts = {
+                str(civilization): received_item_counts[int(item_id)]
+                for civilization, item_id in self.slot_data.get(
+                    "progressive_civilization_win_cap_item_ids", {}
+                ).items()
+            }
         return total_count, civilization_counts
 
     async def _reconcile_cap_inventory(self) -> None:
@@ -536,15 +552,27 @@ class AgeOfEmpiresIVContext(CommonContext):
         self._save_state()
         logger.info("Age of Empires IV goal completed.")
 
-    def unlocked_civilizations(self) -> set[str]:
-        if not self.slot_data:
-            return set()
+    def _resolved_starting_civilizations(self) -> set[str]:
         resolved_starts = self.slot_data.get("starting_civilizations")
         if resolved_starts is None:
             legacy_start = self.slot_data.get("starting_civilization")
             resolved_starts = [legacy_start] if legacy_start else []
-        unlocked = {str(civilization) for civilization in resolved_starts}
-        item_ids = {int(item_id): civilization for civilization, item_id in self.slot_data.get("item_name_to_id", {}).items()}
+        return {str(civilization) for civilization in resolved_starts}
+
+    def unlocked_civilizations(self) -> set[str]:
+        if not self.slot_data:
+            return set()
+        unlocked = self._resolved_starting_civilizations()
+        if "progressive_civilization_item_ids" in self.slot_data:
+            configured_item_ids = self.slot_data.get(
+                "progressive_civilization_item_ids", {}
+            )
+        else:
+            configured_item_ids = self.slot_data.get("item_name_to_id", {})
+        item_ids = {
+            int(item_id): str(civilization)
+            for civilization, item_id in configured_item_ids.items()
+        }
         for network_item in self.items_received:
             civilization = item_ids.get(int(network_item.item))
             if civilization:
