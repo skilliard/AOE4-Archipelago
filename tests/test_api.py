@@ -62,6 +62,17 @@ def test_keyed_last_game_requests_custom_visibility_without_keying_profile():
     }
 
 
+def test_exact_game_retry_uses_the_player_game_endpoint_and_optional_key():
+    requester = FakeRequester([(200, {"game_id": 243_446_997})])
+    client = AOE4WorldClient("session-secret", "https://example.invalid/api", requester)
+
+    game = asyncio.run(client.game(3_454_795, 243_446_997))
+
+    assert game["game_id"] == 243_446_997
+    assert requester.requests[0][0] == "/players/3454795/games/243446997"
+    assert requester.requests[0][1] == {"api_key": "session-secret"}
+
+
 def test_api_errors_redact_key():
     requester = FakeRequester([(401, {})])
     client = AOE4WorldClient("do-not-leak", "https://example.invalid/api", requester)

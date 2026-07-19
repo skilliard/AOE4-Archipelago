@@ -12,10 +12,14 @@ from . import items, locations, options
 from .constants import (
     CIVILIZATIONS,
     GAME_NAME,
+    PROGRESSIVE_TOTAL_WIN_CAP,
     WORLD_VERSION,
     civilization_location_name,
     civilization_unlock_name,
     civilization_win_location_name,
+    progressive_civilization_win_cap_name,
+    progressive_items_required,
+    progressive_win_cap_stages,
     win_location_name,
 )
 from .web import AgeOfEmpiresIVWebWorld
@@ -37,6 +41,10 @@ class AgeOfEmpiresIVWorld(World):
     starting_civilization: str
     starting_civilizations: tuple[str, ...]
     win_thresholds: tuple[int, ...]
+    total_win_cap_stages: tuple[int, ...]
+    civilization_win_cap_stages: tuple[int, ...]
+    civilization_win_check_count: int
+    civ_sanity_win_count: int
     civ_sanity_enabled: bool
     goal: str
 
@@ -69,73 +77,113 @@ class AgeOfEmpiresIVWorld(World):
         if self.goal == "civilization_wins":
             self.win_thresholds = ()
             self.civ_sanity_enabled = False
+            self.civ_sanity_win_count = 0
+            self.civilization_win_check_count = self.options.wins_per_goal_civilization.value
         else:
             self.win_thresholds = tuple(
                 self.options.win_check_interval.value * index
                 for index in range(1, self.options.win_check_count.value + 1)
             )
             self.civ_sanity_enabled = bool(self.options.civ_sanity.value)
+            self.civ_sanity_win_count = (
+                self.options.civ_sanity_win_count.value if self.civ_sanity_enabled else 0
+            )
+            self.civilization_win_check_count = self.civ_sanity_win_count
+
+        if self.goal == "civilization_wins":
+            total_win_cap_target = 0
+        else:
+            highest_win_check = self.win_thresholds[-1]
+            total_win_cap_target = (
+                max(highest_win_check, self.options.total_win_goal.value)
+                if self.goal == "total_wins"
+                else highest_win_check
+            )
+        self.total_win_cap_stages = progressive_win_cap_stages(total_win_cap_target)
+        self.civilization_win_cap_stages = progressive_win_cap_stages(
+            self.civilization_win_check_count
+        )
 
         prefix = f"[{GAME_NAME} - {self.player_name}]"
-        configured_start = self.options.starting_civilization.current_key
-        if configured_start == "random":
-            self.starting_civilization = self.random.choice(self.civilization_pool)
-        elif configured_start not in self.civilization_pool:
-            raise OptionError(
-                f"{prefix} starting_civilization '{configured_start}' is not in {active_pool_name}."
-            )
-        else:
-            self.starting_civilization = configured_start
-
-        starting_civs = self.options.starting_civs.value
-        if starting_civs > len(self.civilization_pool):
-            raise OptionError(
-                f"{prefix} starting_civs is {starting_civs}, but {active_pool_name} contains only "
-                f"{len(self.civilization_pool)} civilization(s)."
-            )
-        additional_candidates = [
+        explicit_starts = tuple(
             civilization
-            for civilization in self.civilization_pool
-            if civilization != self.starting_civilization
-        ]
-        additional_starts = self.random.sample(additional_candidates, starting_civs - 1)
-        self.starting_civilizations = (
-            self.starting_civilization,
-            *additional_starts,
+            for civilization in CIVILIZATIONS
+            if civilization in self.options.starting_civilizations.value
         )
+        if explicit_starts:
+            if len(explicit_starts) > 5:
+                raise OptionError(f"{prefix} starting_civilizations may contain at most 5 civilizations.")
+            invalid_starts = tuple(
+                civilization for civilization in explicit_starts if civilization not in self.civilization_pool
+            )
+            if invalid_starts:
+                raise OptionError(
+                    f"{prefix} starting_civilizations contains civilizations outside {active_pool_name}: "
+                    f"{', '.join(invalid_starts)}."
+                )
+            self.starting_civilizations = explicit_starts
+            self.starting_civilization = explicit_starts[0]
+        else:
+            configured_start = self.options.starting_civilization.current_key
+            if configured_start == "random":
+                self.starting_civilization = self.random.choice(self.civilization_pool)
+            elif configured_start not in self.civilization_pool:
+                raise OptionError(
+                    f"{prefix} starting_civilization '{configured_start}' is not in {active_pool_name}."
+                )
+            else:
+                self.starting_civilization = configured_start
+
+            starting_civs = self.options.starting_civs.value
+            if starting_civs > len(self.civilization_pool):
+                raise OptionError(
+                    f"{prefix} starting_civs is {starting_civs}, but {active_pool_name} contains only "
+                    f"{len(self.civilization_pool)} civilization(s)."
+                )
+            additional_candidates = [
+                civilization
+                for civilization in self.civilization_pool
+                if civilization != self.starting_civilization
+            ]
+            additional_starts = self.random.sample(additional_candidates, starting_civs - 1)
+            self.starting_civilizations = (
+                self.starting_civilization,
+                *additional_starts,
+            )
 
         if self.goal == "solo_rank" and "rm_solo" not in self.eligible_match_modes:
             raise OptionError(f"{prefix} solo_rank requires rm_solo in eligible_match_modes.")
         if self.goal == "team_rank" and "rm_team" not in self.eligible_match_modes:
             raise OptionError(f"{prefix} team_rank requires rm_team in eligible_match_modes.")
 
-        if self.goal == "civilization_wins":
-            location_count = (
-                len(self.goal_civilizations) * self.options.wins_per_goal_civilization.value
-            )
-        else:
-            location_count = len(self.win_thresholds)
-        if self.civ_sanity_enabled:
-            location_count += len(self.civilization_pool)
+        location_count = len(self.win_thresholds)
+        if self.civilization_win_check_count:
+            location_count += len(self.civilization_pool) * self.civilization_win_check_count
         required_unlocks = len(self.civilization_pool) - len(self.starting_civilizations)
-        if location_count < required_unlocks:
+        required_progression_items = (
+            required_unlocks
+            + max(0, len(self.total_win_cap_stages) - 1)
+            + len(self.civilization_pool) * max(0, len(self.civilization_win_cap_stages) - 1)
+        )
+        if location_count < required_progression_items:
             raise OptionError(
-                f"{prefix} generates {location_count} locations but needs at least {required_unlocks} "
-                "locations for civilization unlocks. Increase win_check_count or enable civ_sanity."
+                f"{prefix} generates {location_count} locations but needs at least "
+                f"{required_progression_items} locations for civilization unlocks and progressive win caps. "
+                "Increase win_check_count or civilization win checks, enable civ_sanity, or add starting civilizations."
             )
 
     def create_regions(self) -> None:
         menu = Region("Menu", self.player, self.multiworld)
         self.multiworld.regions.append(menu)
 
-        if self.goal == "civilization_wins":
+        if self.civilization_win_check_count > 1 or self.goal == "civilization_wins":
             menu.add_locations(
                 {
                     civilization_win_location_name(civilization, win_number): self.location_name_to_id[
                         civilization_win_location_name(civilization, win_number)
                     ]
-                    for civilization in self.goal_civilizations
-                    for win_number in range(1, self.options.wins_per_goal_civilization.value + 1)
+                    for civilization in self.civilization_pool
+                    for win_number in range(1, self.civilization_win_check_count + 1)
                 },
                 locations.AgeOfEmpiresIVLocation,
             )
@@ -166,13 +214,20 @@ class AgeOfEmpiresIVWorld(World):
         )
 
     def set_rules(self) -> None:
-        if self.goal == "civilization_wins":
-            for civilization in self.goal_civilizations:
-                for win_number in range(1, self.options.wins_per_goal_civilization.value + 1):
+        if self.civilization_win_check_count > 1 or self.goal == "civilization_wins":
+            for civilization in self.civilization_pool:
+                for win_number in range(1, self.civilization_win_check_count + 1):
+                    cap_items = progressive_items_required(
+                        win_number, self.civilization_win_cap_stages
+                    )
                     set_rule(
                         self.get_location(civilization_win_location_name(civilization, win_number)),
-                        lambda state, unlock=civilization_unlock_name(civilization): state.has(
-                            unlock, self.player
+                        lambda state,
+                        unlock=civilization_unlock_name(civilization),
+                        cap_name=progressive_civilization_win_cap_name(civilization),
+                        cap_count=cap_items: (
+                            state.has(unlock, self.player)
+                            and state.has(cap_name, self.player, cap_count)
                         ),
                     )
         elif self.civ_sanity_enabled:
@@ -182,11 +237,37 @@ class AgeOfEmpiresIVWorld(World):
                     lambda state, unlock=civilization_unlock_name(civilization): state.has(unlock, self.player),
                 )
 
+        for threshold in self.win_thresholds:
+            cap_items = progressive_items_required(threshold, self.total_win_cap_stages)
+            set_rule(
+                self.get_location(win_location_name(threshold)),
+                lambda state, cap_count=cap_items: state.has(
+                    PROGRESSIVE_TOTAL_WIN_CAP, self.player, cap_count
+                ),
+            )
+
         if self.goal == "civilization_wins":
             goal_unlocks = tuple(civilization_unlock_name(civ) for civ in self.goal_civilizations)
+            cap_items = max(0, len(self.civilization_win_cap_stages) - 1)
+            cap_names = tuple(
+                progressive_civilization_win_cap_name(civ) for civ in self.goal_civilizations
+            )
             set_rule(
                 self.get_location("AOE4 Goal Achieved"),
-                lambda state: state.has_all(goal_unlocks, self.player),
+                lambda state: (
+                    state.has_all(goal_unlocks, self.player)
+                    and all(state.has(cap_name, self.player, cap_items) for cap_name in cap_names)
+                ),
+            )
+        elif self.goal == "total_wins":
+            goal_cap_items = progressive_items_required(
+                self.options.total_win_goal.value, self.total_win_cap_stages
+            )
+            set_rule(
+                self.get_location("AOE4 Goal Achieved"),
+                lambda state: state.has(
+                    PROGRESSIVE_TOTAL_WIN_CAP, self.player, goal_cap_items
+                ),
             )
 
         self.multiworld.completion_condition[self.player] = lambda state: state.has("Victory", self.player)
@@ -201,6 +282,15 @@ class AgeOfEmpiresIVWorld(World):
             for civilization in self.civilization_pool
             if civilization not in starting_civilizations
         ]
+        itempool.extend(
+            self.create_item(PROGRESSIVE_TOTAL_WIN_CAP)
+            for _ in range(max(0, len(self.total_win_cap_stages) - 1))
+        )
+        for civilization in self.civilization_pool:
+            itempool.extend(
+                self.create_item(progressive_civilization_win_cap_name(civilization))
+                for _ in range(max(0, len(self.civilization_win_cap_stages) - 1))
+            )
         empty_location_count = len(self.multiworld.get_unfilled_locations(self.player))
         filler_count = empty_location_count - len(itempool)
         if filler_count < 0:
@@ -230,19 +320,31 @@ class AgeOfEmpiresIVWorld(World):
             "starting_civilizations": list(self.starting_civilizations),
             "eligible_match_modes": list(self.eligible_match_modes),
             "civ_sanity": self.civ_sanity_enabled,
+            "civ_sanity_win_count": self.civ_sanity_win_count,
             "win_check_interval": self.options.win_check_interval.value,
             "win_check_count": self.options.win_check_count.value,
             "win_thresholds": list(self.win_thresholds),
+            "total_win_cap_stages": list(self.total_win_cap_stages),
+            "civilization_win_cap_stages": list(self.civilization_win_cap_stages),
             "include_custom_games": bool(self.options.include_custom_games.value),
             "death_link": bool(self.options.death_link.value),
             "item_name_to_id": {
                 civilization: self.item_name_to_id[civilization_unlock_name(civilization)]
                 for civilization in self.civilization_pool
             },
+            "progressive_total_win_cap_item_id": self.item_name_to_id[
+                PROGRESSIVE_TOTAL_WIN_CAP
+            ] if self.total_win_cap_stages else None,
+            "progressive_civilization_win_cap_item_ids": {
+                civilization: self.item_name_to_id[
+                    progressive_civilization_win_cap_name(civilization)
+                ]
+                for civilization in self.civilization_pool
+            } if self.civilization_win_cap_stages else {},
             "civilization_location_ids": {
                 civilization: self.location_name_to_id[civilization_location_name(civilization)]
                 for civilization in self.civilization_pool
-            } if self.civ_sanity_enabled else {},
+            } if self.civ_sanity_enabled and self.civilization_win_check_count == 1 else {},
             "win_location_ids": {
                 str(threshold): self.location_name_to_id[win_location_name(threshold)]
                 for threshold in self.win_thresholds
@@ -252,8 +354,8 @@ class AgeOfEmpiresIVWorld(World):
                     str(win_number): self.location_name_to_id[
                         civilization_win_location_name(civilization, win_number)
                     ]
-                    for win_number in range(1, self.options.wins_per_goal_civilization.value + 1)
+                    for win_number in range(1, self.civilization_win_check_count + 1)
                 }
-                for civilization in self.goal_civilizations
-            } if self.goal == "civilization_wins" else {},
+                for civilization in self.civilization_pool
+            } if self.civilization_win_check_count > 1 or self.goal == "civilization_wins" else {},
         }

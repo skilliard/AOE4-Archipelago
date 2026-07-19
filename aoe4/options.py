@@ -26,7 +26,7 @@ class TotalWinGoal(Range):
 
 
 class WinsPerGoalCivilization(Range):
-    """Victories required with every selected goal civilization."""
+    """Numbered victories required with every selected goal civilization."""
     display_name = "Wins Per Goal Civilization"
     range_start = 1
     range_end = 50
@@ -109,11 +109,18 @@ class StartingCivilization(TextChoice):
 
 
 class StartingCivilizations(Range):
-    """Number of civilizations to start unlocked from the active goal-dependent pool."""
+    """Number of deterministic random civilizations to start unlocked, from 1 to 5."""
     display_name = "Starting Civilizations"
     range_start = 1
-    range_end = len(CIVILIZATIONS)
+    range_end = 5
     default = 1
+
+
+class StartingCivilizationList(OptionSet):
+    """Exact starting civilizations. When non-empty, this overrides the other starting civilization options."""
+    display_name = "Starting Civilization List"
+    valid_keys = frozenset(CIVILIZATIONS)
+    default = frozenset()
 
 
 class EligibleMatchModes(OptionSet):
@@ -124,12 +131,20 @@ class EligibleMatchModes(OptionSet):
 
 
 class CivilizationSanity(DefaultOnToggle):
-    """Add a first-win check per pool civilization for total-win/rank goals. Civilization-win goals ignore this."""
+    """Add configured win checks per pool civilization for total-win/rank goals. Civilization-win goals ignore this."""
     display_name = "Civilization Sanity"
 
 
+class CivilizationSanityWinCount(Range):
+    """Number of numbered win checks per civilization when civilization sanity is enabled."""
+    display_name = "Civilization Sanity Win Count"
+    range_start = 1
+    range_end = 50
+    default = 1
+
+
 class WinCheckInterval(Range):
-    """Credited victories between total-win checks. Civilization-win goals use numbered per-civ checks instead."""
+    """Credited victories between progressive total-win checks. Civilization-win goals ignore this."""
     display_name = "Win Check Interval"
     range_start = 1
     range_end = 50
@@ -164,8 +179,10 @@ class AgeOfEmpiresIVOptions(PerGameCommonOptions):
     civilization_pool: CivilizationPool
     starting_civilization: StartingCivilization
     starting_civs: StartingCivilizations
+    starting_civilizations: StartingCivilizationList
     eligible_match_modes: EligibleMatchModes
     civ_sanity: CivilizationSanity
+    civ_sanity_win_count: CivilizationSanityWinCount
     win_check_interval: WinCheckInterval
     win_check_count: WinCheckCount
     include_custom_games: IncludeCustomGames
@@ -176,7 +193,14 @@ option_groups = [
     OptionGroup("Goal", [Goal, TotalWinGoal, WinsPerGoalCivilization, GoalCivilizations, TargetRank]),
     OptionGroup(
         "Civilizations",
-        [CivilizationPool, StartingCivilization, StartingCivilizations, CivilizationSanity],
+        [
+            CivilizationPool,
+            StartingCivilization,
+            StartingCivilizations,
+            StartingCivilizationList,
+            CivilizationSanity,
+            CivilizationSanityWinCount,
+        ],
     ),
     OptionGroup(
         "Match Tracking",
@@ -191,7 +215,9 @@ option_presets = {
         "total_win_goal": 20,
         "starting_civilization": "random",
         "starting_civs": 1,
+        "starting_civilizations": [],
         "civ_sanity": True,
+        "civ_sanity_win_count": 1,
         "win_check_interval": 1,
         "win_check_count": 25,
         "include_custom_games": False,
@@ -203,7 +229,9 @@ option_presets = {
         "wins_per_goal_civilization": 1,
         "starting_civilization": "random",
         "starting_civs": 1,
+        "starting_civilizations": [],
         "civ_sanity": False,
+        "civ_sanity_win_count": 1,
         "include_custom_games": False,
     },
     "Ranked Climb": {
@@ -212,6 +240,8 @@ option_presets = {
         "eligible_match_modes": ["rm_solo"],
         "starting_civilization": "random",
         "starting_civs": 1,
+        "starting_civilizations": [],
+        "civ_sanity_win_count": 1,
         "win_check_interval": 1,
         "win_check_count": 25,
         "include_custom_games": False,

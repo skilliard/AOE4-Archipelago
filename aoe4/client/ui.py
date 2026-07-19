@@ -182,7 +182,7 @@ class AgeOfEmpiresIVManager(GameManager):
         self.tracker_summary = Label(
             text="Connect to an Age of Empires IV slot to view its civilization pool.",
             size_hint_y=None,
-            height=dp(48),
+            height=dp(72),
             halign="left",
             valign="middle",
         )
@@ -205,7 +205,8 @@ class AgeOfEmpiresIVManager(GameManager):
 
     def _refresh_tracker(self) -> None:
         entries = self.ctx.civilization_tracker_entries()
-        signature = (bool(self.ctx.slot_data), entries)
+        total_progress = self.ctx.total_win_tracker_progress()
+        signature = (bool(self.ctx.slot_data), entries, total_progress)
         if signature == self._tracker_signature:
             return
         self._tracker_signature = signature
@@ -219,13 +220,21 @@ class AgeOfEmpiresIVManager(GameManager):
             return
 
         available = tuple(entry for entry in entries if entry.unlocked)
-        pending = tuple(entry for entry in available if entry.wins_remaining > 0)
+        pending = tuple(entry for entry in available if not entry.requirement_complete)
         locked = tuple(entry for entry in entries if not entry.unlocked)
         completed = sum(
             entry.required_wins > 0 and entry.requirement_complete for entry in available
         )
         required = sum(entry.required_wins > 0 for entry in available)
-        self.tracker_summary.text = (
+        earned_total, attainable_total, final_total_cap = total_progress
+        if attainable_total is None:
+            total_summary = f"Total wins: {earned_total} earned; no global cap. "
+        else:
+            total_summary = (
+                f"Total wins: {earned_total} earned / {attainable_total} currently attainable"
+                f" (final cap {final_total_cap}). "
+            )
+        self.tracker_summary.text = total_summary + (
             f"{len(available)} of {len(entries)} civilizations available. "
             f"{len(pending)} unlocked civilization(s) still need wins; "
             f"{completed}/{required} unlocked requirements complete."
@@ -310,20 +319,41 @@ class AgeOfEmpiresIVManager(GameManager):
             status = "Locked - receive its Civilization Unlock item"
             color = (0.56, 0.58, 0.63, 1)
         elif entry.required_wins == 0:
-            status = "Unlocked - no civilization-specific wins required"
+            status = (
+                f"Unlocked - {entry.credited_wins} earned; "
+                "no civilization-specific wins required"
+            )
             color = (0.45, 0.85, 0.55, 1)
-        elif entry.wins_remaining == 0:
-            status = f"Complete - {entry.credited_wins}/{entry.required_wins} required wins"
+        else:
+            attainable = (
+                str(entry.attainable_wins)
+                if entry.attainable_wins is not None
+                else "unrestricted"
+            )
+        if row_kind != "locked" and entry.required_wins > 0 and entry.requirement_complete:
+            status = (
+                f"Complete - {entry.credited_wins} earned / {attainable} currently attainable / "
+                f"{entry.required_wins} required"
+            )
             color = (0.45, 0.85, 0.55, 1)
+        elif row_kind != "locked" and entry.cap_blocked:
+            status = (
+                f"Win cap required - {entry.credited_wins} earned / {attainable} currently attainable / "
+                f"{entry.required_wins} required"
+            )
+            color = (1, 0.72, 0.28, 1)
         elif row_kind == "pending":
             noun = "win" if entry.wins_remaining == 1 else "wins"
             status = (
-                f"{entry.wins_remaining} {noun} remaining - "
-                f"{entry.credited_wins}/{entry.required_wins} credited"
+                f"{entry.wins_remaining} {noun} remaining - {entry.credited_wins} earned / "
+                f"{attainable} currently attainable / {entry.required_wins} required"
             )
             color = (1, 0.72, 0.28, 1)
-        else:
-            status = f"{entry.credited_wins}/{entry.required_wins} required wins"
+        elif row_kind != "locked" and entry.required_wins > 0:
+            status = (
+                f"{entry.credited_wins} earned / {attainable} currently attainable / "
+                f"{entry.required_wins} required"
+            )
             color = (1, 0.82, 0.45, 1)
 
         details = BoxLayout(orientation="vertical", spacing=0)

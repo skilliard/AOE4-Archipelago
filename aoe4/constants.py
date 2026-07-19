@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 
 GAME_NAME = "Age of Empires IV"
-WORLD_VERSION = "0.4.0"
+WORLD_VERSION = "0.5.0"
 MINIMUM_AP_VERSION = "0.6.7"
 
 # Stable YAML/API identifiers mapped to the names shown by AOE4World and the AP client.
@@ -76,6 +76,30 @@ RANK_DISPLAY_NAMES["conqueror_4"] = "Conqueror IV"
 
 def civilization_unlock_name(civilization: str) -> str:
     return f"{CIVILIZATIONS[civilization]} Civilization Unlock"
+
+
+PROGRESSIVE_TOTAL_WIN_CAP = "Progressive Total Win Cap"
+
+
+def progressive_civilization_win_cap_name(civilization: str) -> str:
+    return f"Progressive {CIVILIZATIONS[civilization]} Win Cap"
+
+
+def progressive_win_cap_stages(target: int) -> tuple[int, ...]:
+    """Return the initial and progressively unlocked cumulative win caps."""
+    if target < 1:
+        return ()
+    if target < 5:
+        return tuple(range(1, target + 1))
+    return tuple((target * stage + 4) // 5 for stage in range(1, 6))
+
+
+def progressive_items_required(value: int, stages: tuple[int, ...]) -> int:
+    """Return how many progressive items are required to make value attainable."""
+    for item_count, cap in enumerate(stages):
+        if value <= cap:
+            return item_count
+    return max(0, len(stages) - 1)
 
 
 def civilization_location_name(civilization: str) -> str:

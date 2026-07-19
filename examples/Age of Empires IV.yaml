@@ -38,9 +38,11 @@ Age of Empires IV:
     - tughlaq_dynasty
     - zhu_xis_legacy
   starting_civilization: random
-  # Total starting unlocks. Additional starts are selected from the same active
-  # goal_civilizations or civilization_pool list as starting_civilization.
+  # Total random starting unlocks, from 1 to 5. Additional starts are selected
+  # from the same active goal_civilizations or civilization_pool.
   starting_civs: 1
+  # Optional exact starting set (1-5). A non-empty list overrides both options above.
+  starting_civilizations: []
   eligible_match_modes:
     - rm_solo
     - rm_team
@@ -48,9 +50,11 @@ Age of Empires IV:
     - qm_2v2
     - qm_3v3
     - qm_4v4
-  # These three check options are ignored by civilization_wins, which creates
+  # These global check options are ignored by civilization_wins, which creates
   # numbered checks 1 through wins_per_goal_civilization for each goal civ.
   civ_sanity: true
+  # Numbered checks per pool civilization when civ_sanity is enabled.
+  civ_sanity_win_count: 1
   win_check_interval: 1
   win_check_count: 25
   include_custom_games: false

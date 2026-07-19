@@ -13,7 +13,7 @@ from aoe4.client.tracker import (
     TrackerState,
     rank_at_least,
 )
-from aoe4.constants import civilization_win_location_name
+from aoe4.constants import civilization_win_location_name, win_location_name
 
 
 def config(**overrides) -> TrackerConfig:
@@ -71,7 +71,15 @@ def test_locked_randomized_ongoing_unknown_and_deduplication():
     tracker.process_games([game(2, ongoing=True), game(3, result="unknown")], {"english"}, 1_300)
     assert tracker.state.total_wins == 0
     assert 2 not in tracker.state.seen_game_ids
+    assert 3 not in tracker.state.seen_game_ids
+    assert tracker.state.pending_games == {"3": 1_100.0}
+    assert tracker.state.last_game_summary == "Awaiting result as English in rm_solo"
+
+    resolved = tracker.process_games([game(3, result="win")], {"english"}, 1_300)
+    assert resolved.processed_game_ids == [3]
+    assert tracker.state.total_wins == 1
     assert 3 in tracker.state.seen_game_ids
+    assert tracker.state.pending_games == {}
 
 
 def test_multi_threshold_backfill_and_civ_sanity():
@@ -210,6 +218,107 @@ def test_legacy_civilization_goal_slot_keeps_legacy_check_mapping():
     assert outcome.new_checks == ["Win 1 Match", "Civilization Victory: English"]
 
 
+def test_total_win_cap_gates_checks_and_goal_then_backfills_without_new_games():
+    tracker = MatchTracker(
+        config(
+            total_win_goal=50,
+            civ_sanity=False,
+            win_thresholds=tuple(range(1, 51)),
+            total_win_cap_stages=(10, 20, 30, 40, 50),
+        )
+    )
+    games = [game(index, started=1_000 + index * 10) for index in range(1, 51)]
+    initial = tracker.process_games(games, {"english"}, observed_at=2_000)
+    assert tracker.state.total_wins == 50
+    assert initial.new_checks == [win_location_name(value) for value in range(1, 11)]
+    assert tracker.current_total_win_cap() == 10
+    assert not initial.goal_reached
+
+    second_stage = tracker.update_cap_inventory(1, {})
+    assert second_stage.new_checks == [win_location_name(value) for value in range(11, 21)]
+    assert tracker.current_total_win_cap() == 20
+    assert not second_stage.goal_reached
+
+    final_stage = tracker.update_cap_inventory(4, {})
+    assert final_stage.new_checks == [win_location_name(value) for value in range(21, 51)]
+    assert tracker.current_total_win_cap() == 50
+    assert final_stage.goal_reached
+    assert tracker.update_cap_inventory(4, {}).new_checks == []
+
+
+def test_civilization_goal_caps_are_independent_and_gate_goal_completion():
+    tracker = MatchTracker(
+        config(
+            goal="civilization_wins",
+            goal_civilizations=frozenset({"english", "french"}),
+            civilization_pool=frozenset({"english", "french"}),
+            wins_per_goal_civilization=3,
+            numbered_civilization_win_checks=True,
+            civilization_win_cap_stages=(1, 2, 3),
+            civ_sanity=False,
+            win_thresholds=(),
+        )
+    )
+    games = [
+        game(1, civ="english", started=1_100),
+        game(2, civ="english", started=1_200),
+        game(3, civ="english", started=1_300),
+        game(4, civ="french", started=1_400),
+        game(5, civ="french", started=1_500),
+        game(6, civ="french", started=1_600),
+    ]
+    initial = tracker.process_games(games, {"english", "french"}, observed_at=2_000)
+    assert initial.new_checks == [
+        civilization_win_location_name("english", 1),
+        civilization_win_location_name("french", 1),
+    ]
+    assert tracker.state.civilization_wins == {"english": 3, "french": 3}
+    assert not tracker.goal_reached()
+
+    english = tracker.update_cap_inventory(0, {"english": 2})
+    assert english.new_checks == [
+        civilization_win_location_name("english", 2),
+        civilization_win_location_name("english", 3),
+    ]
+    assert tracker.current_civilization_win_cap("english") == 3
+    assert tracker.current_civilization_win_cap("french") == 1
+    assert not tracker.goal_reached()
+
+    french = tracker.update_cap_inventory(0, {"french": 2})
+    assert french.new_checks == [
+        civilization_win_location_name("french", 2),
+        civilization_win_location_name("french", 3),
+    ]
+    assert french.goal_reached
+
+
+def test_rank_goal_ignores_win_caps_while_numbered_civ_sanity_checks_do_not():
+    tracker = MatchTracker(
+        config(
+            goal="solo_rank",
+            target_rank="gold_1",
+            civ_sanity=True,
+            civ_sanity_win_count=3,
+            numbered_civilization_win_checks=True,
+            civilization_win_cap_stages=(1, 2, 3),
+            win_thresholds=(),
+        )
+    )
+    initial = tracker.process_games(
+        [game(1), game(2, started=1_200), game(3, started=1_300)],
+        {"english"},
+        1_500,
+    )
+    assert initial.new_checks == [civilization_win_location_name("english", 1)]
+    assert tracker.update_ranks({"modes": {"rm_solo": {"rank_level": "gold_1"}}})
+    assert tracker.goal_reached()
+    backfill = tracker.update_cap_inventory(0, {"english": 2})
+    assert backfill.new_checks == [
+        civilization_win_location_name("english", 2),
+        civilization_win_location_name("english", 3),
+    ]
+
+
 def test_deathlink_nonstack_expiry_and_win_consumption():
     tracker = MatchTracker(config(death_link=True))
     assert tracker.receive_death_link(1_050)
@@ -264,10 +373,29 @@ def test_state_restart_persistence_prevents_duplicates(tmp_path):
 
 def test_version_one_state_migrates_legacy_cursor_to_credentialed_cursor():
     migrated = TrackerState.from_dict({"schema_version": 1, "cursor_started_at": 1_234.0})
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert migrated.cursor_started_at == 1_234.0
     assert migrated.credentialed_cursor_started_at == 1_234.0
 
     fresh = TrackerState()
-    assert fresh.schema_version == 2
+    assert fresh.schema_version == 3
     assert fresh.credentialed_cursor_started_at is None
+
+
+def test_version_two_unknown_result_is_migrated_back_to_pending():
+    migrated = TrackerState.from_dict(
+        {
+            "schema_version": 2,
+            "seen_game_ids": [10, 243_446_997],
+            "cursor_started_at": 1_768_786_735.0,
+            "last_game_id": 243_446_997,
+            "last_api_game_signature": "stale-signature",
+            "last_game_summary": "Unknown as English in qm_1v1",
+        }
+    )
+
+    assert migrated.schema_version == 3
+    assert migrated.seen_game_ids == [10]
+    assert migrated.pending_games == {"243446997": 1_768_786_735.0}
+    assert migrated.last_game_summary == "Awaiting result as English in qm_1v1"
+    assert migrated.last_api_game_signature is None
